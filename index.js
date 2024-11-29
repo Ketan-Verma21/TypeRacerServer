@@ -178,7 +178,7 @@ mongoose.connect(DB).then(() => {
     console.log("MongoDB Connected Successfully...");
     //    console.log("Yes");
 }).catch((err) => {
-    consolle.log("error coming here");
+    console.log("error coming here");
     console.log(err);
 
 });
