@@ -19,6 +19,8 @@ module.exports = (io, socket, session) => {
             io.to(gameId).emit("updateGame", game);
         } catch (err) {
             console.log(err);
+            // e.g. the quote API failed: tell the player instead of leaving them waiting
+            socket.emit("notCorrectGame", "Couldn't create a room right now. Please try again.");
         }
     });
 
@@ -42,6 +44,7 @@ module.exports = (io, socket, session) => {
             io.to(id).emit("updateGame", result.game);
         } catch (err) {
             console.log(err);
+            socket.emit("notCorrectGame", "Couldn't join the room right now. Please try again.");
         }
     });
 
@@ -55,12 +58,15 @@ module.exports = (io, socket, session) => {
         }
     });
 
-    socket.on("timer", async ({ playerId, gameId }) => {
+    // Host starts the race. The host is taken from this socket's session, never
+    // from the payload: a client could send someone else's playerId.
+    socket.on("timer", async ({ gameId } = {}) => {
         try {
+            if (!session.gameId || gameId !== session.gameId) return; // not our game
             if (timerService.hasTimers(gameId)) return; // already running
             const game = await Game.findById(gameId);
             if (!game || !game.isJoin) return;
-            const player = game.players.id(playerId);
+            const player = game.players.id(session.playerId);
             if (!player || !player.isPartyLeader) return;
             timerService.startCountdown(gameId, gameService.endGame);
         } catch (e) {
