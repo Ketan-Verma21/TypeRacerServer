@@ -6,6 +6,7 @@ import { createHttpApp } from "./app";
 import { loadConfig } from "./config/env";
 import { buildContainer } from "./container";
 import { PinoLogger } from "./infra/PinoLogger";
+import { createRedisClient, isRedisReady } from "./infra/redis";
 import { registerSocketHandlers } from "./transport/socket/registerSocketHandlers";
 import type { IoServer } from "./transport/socket/types";
 
@@ -16,10 +17,13 @@ process.on("unhandledRejection", (reason) =>
     logger.error("unhandled rejection", { reason: String(reason) }),
 );
 
-const server = http.createServer(createHttpApp());
+const redis = config.store === "redis" ? createRedisClient(config.redisUrl, logger) : undefined;
+const isReady = redis ? () => isRedisReady(redis) : undefined;
+
+const server = http.createServer(createHttpApp({ isReady }));
 const io = socketIo(server) as unknown as IoServer;
 registerSocketHandlers(io, buildContainer(config, io, logger));
 
 server.listen(config.port, "0.0.0.0", () => {
-    logger.info("Type Racer server listening", { port: config.port });
+    logger.info("Type Racer server listening", { port: config.port, store: config.store });
 });
