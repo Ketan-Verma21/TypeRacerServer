@@ -7,8 +7,10 @@ services:
         build: .
         image: type-racer-server
         env_file: .env # copy .env.example to .env first
-        environment:
+        environment: # these win over the same names in .env
             INSTANCE_ID: app1
+            STORE: redis
+            REDIS_URL: redis://redis:6379 # "redis" = the service name below
         ports:
             - "3000:3000"
         depends_on:
@@ -30,7 +32,7 @@ services:
         restart: unless-stopped
 
     redis:
-        # Not used by the code yet (Phase 4). AOF on, so data survives restarts.
+        # The datastore (Phase 4). AOF on, so rooms survive a Redis restart too.
         image: redis:7
         command: ["redis-server", "--appendonly", "yes"]
         ports:

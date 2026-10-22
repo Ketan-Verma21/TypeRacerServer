@@ -4,6 +4,10 @@ import { InMemoryChatRepository } from "./adapters/memory/InMemoryChatRepository
 import { InMemoryGameRepository } from "./adapters/memory/InMemoryGameRepository";
 import { InMemoryRateLimiter } from "./adapters/memory/InMemoryRateLimiter";
 import { InMemorySessionStore } from "./adapters/memory/InMemorySessionStore";
+import { RedisChatRepository } from "./adapters/redis/RedisChatRepository";
+import { RedisGameRepository } from "./adapters/redis/RedisGameRepository";
+import { RedisRateLimiter } from "./adapters/redis/RedisRateLimiter";
+import { RedisSessionStore } from "./adapters/redis/RedisSessionStore";
 import { IntervalScheduler } from "./adapters/IntervalScheduler";
 import path from "node:path";
 import { ApiNinjasQuoteProvider } from "./adapters/quotes/ApiNinjasQuoteProvider";
@@ -12,9 +16,15 @@ import { LocalQuoteProvider } from "./adapters/quotes/LocalQuoteProvider";
 import { RandomIdGenerator } from "./adapters/RandomIdGenerator";
 import { SocketIoNotifier } from "./adapters/socket/SocketIoNotifier";
 import { SystemClock } from "./adapters/SystemClock";
-import type { Config } from "./config/env";
+import type { Redis } from "ioredis";
+import type { Config, Store } from "./config/env";
 import { createDefaultModeRegistry } from "./domain/modes/modeRegistry";
+import type { ChatRepository } from "./ports/ChatRepository";
+import type { Clock } from "./ports/Clock";
+import type { GameRepository } from "./ports/GameRepository";
 import type { Logger } from "./ports/Logger";
+import type { RateLimiter } from "./ports/RateLimiter";
+import type { SessionStore } from "./ports/SessionStore";
 import { ChatService } from "./services/ChatService";
 import { GameService } from "./services/GameService";
 import { PresenceService } from "./services/PresenceService";
@@ -23,7 +33,41 @@ import { RaceClock } from "./services/RaceClock";
 import type { SocketHandlerDeps } from "./transport/socket/registerSocketHandlers";
 import type { IoServer } from "./transport/socket/types";
 
-export function buildContainer(config: Config, io: IoServer, logger: Logger): SocketHandlerDeps {
+export interface Stores {
+    games: GameRepository;
+    chat: ChatRepository;
+    sessions: SessionStore;
+    limiter: RateLimiter;
+}
+
+/**
+ * STORE=memory | redis picks ONE set of adapters. The services only see the
+ * ports above, so nothing else changes when this switch flips (DIP).
+ */
+export function createStores(store: Store, clock: Clock, redis?: Redis): Stores {
+    if (store === "redis") {
+        if (!redis) throw new Error("STORE=redis needs a Redis client");
+        return {
+            games: new RedisGameRepository(redis),
+            chat: new RedisChatRepository(redis),
+            sessions: new RedisSessionStore(redis),
+            limiter: new RedisRateLimiter(redis),
+        };
+    }
+    return {
+        games: new InMemoryGameRepository(),
+        chat: new InMemoryChatRepository(),
+        sessions: new InMemorySessionStore(),
+        limiter: new InMemoryRateLimiter(clock),
+    };
+}
+
+export function buildContainer(
+    config: Config,
+    io: IoServer,
+    logger: Logger,
+    redis?: Redis,
+): SocketHandlerDeps {
     const clock = new SystemClock();
     const scheduler = new IntervalScheduler((err) =>
         logger.error("timer failed", { err: String(err) }),
@@ -31,10 +75,7 @@ export function buildContainer(config: Config, io: IoServer, logger: Logger): So
     const ids = new RandomIdGenerator();
     const notifier = new SocketIoNotifier(io);
 
-    const games = new InMemoryGameRepository();
-    const chat = new InMemoryChatRepository();
-    const sessions = new InMemorySessionStore();
-    const limiter = new InMemoryRateLimiter(clock);
+    const { games, chat, sessions, limiter } = createStores(config.store, clock, redis);
 
     // API Ninjas first; bundled quotes if it fails (or no key is set)
     const localQuotes = LocalQuoteProvider.fromFile(

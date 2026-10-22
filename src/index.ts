@@ -21,9 +21,24 @@ const redis = config.store === "redis" ? createRedisClient(config.redisUrl, logg
 const isReady = redis ? () => isRedisReady(redis) : undefined;
 
 const server = http.createServer(createHttpApp({ isReady }));
-const io = socketIo(server) as unknown as IoServer;
-registerSocketHandlers(io, buildContainer(config, io, logger));
+const socketServer = socketIo(server);
+const io = socketServer as unknown as IoServer;
+registerSocketHandlers(io, buildContainer(config, io, logger, redis));
 
 server.listen(config.port, "0.0.0.0", () => {
     logger.info("Type Racer server listening", { port: config.port, store: config.store });
 });
+
+// `docker compose stop/restart` sends SIGTERM. Without a handler Node (PID 1 in
+// the container) ignores it and Docker kills us after 10 s. Close cleanly instead.
+let stopping = false;
+function shutdown(signal: string): void {
+    if (stopping) return;
+    stopping = true;
+    logger.info("shutting down", { signal });
+    socketServer.close(); // also closes the HTTP server
+    void (redis?.quit() ?? Promise.resolve()).finally(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000).unref(); // don't wait forever
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
