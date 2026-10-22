@@ -1,0 +1,15 @@
+# Keep the build context small and never send secrets into the image.
+node_modules
+dist
+coverage
+tests
+.env
+.env.*
+!.env.example
+.git
+.gitattributes
+.gitignore
+*.log
+Dockerfile
+docker-compose.yml
+.dockerignore

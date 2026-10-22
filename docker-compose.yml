@@ -1,0 +1,48 @@
+# Local backend: one app server + Redis.
+#   docker compose up --build      start (Ctrl+C to stop)
+#   docker compose down            remove containers (Redis data stays in the volume)
+# Phase 5/6 grow this to app1..app3 behind nginx.
+services:
+    app:
+        build: .
+        image: type-racer-server
+        env_file: .env # copy .env.example to .env first
+        environment:
+            INSTANCE_ID: app1
+        ports:
+            - "3000:3000"
+        depends_on:
+            redis:
+                condition: service_healthy
+        healthcheck:
+            # The slim image has no curl, so ask Node to call /health/ready.
+            test:
+                [
+                    "CMD",
+                    "node",
+                    "-e",
+                    "fetch('http://localhost:3000/health/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+                ]
+            interval: 10s
+            timeout: 3s
+            retries: 3
+            start_period: 5s
+        restart: unless-stopped
+
+    redis:
+        # Not used by the code yet (Phase 4). AOF on, so data survives restarts.
+        image: redis:7
+        command: ["redis-server", "--appendonly", "yes"]
+        ports:
+            - "127.0.0.1:6379:6379" # host-only, for redis-cli while learning
+        volumes:
+            - redis-data:/data
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 5s
+            timeout: 3s
+            retries: 5
+        restart: unless-stopped
+
+volumes:
+    redis-data:
