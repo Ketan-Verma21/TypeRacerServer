@@ -29,6 +29,13 @@ class FakeSocket implements ServerSocket {
     errors(): unknown[] {
         return this.emitted.filter((e) => e.event === "notCorrectGame").map((e) => e.args[0]);
     }
+    /** `error-message` payloads ({code, message}). */
+    errorMessages(): unknown[] {
+        return this.emitted.filter((e) => e.event === "error-message").map((e) => e.args[0]);
+    }
+    last(event: string): unknown {
+        return this.emitted.filter((e) => e.event === event).at(-1)?.args[0];
+    }
 }
 
 const settle = async () => {
@@ -69,6 +76,19 @@ beforeEach(() => {
 });
 
 describe("create-game", () => {
+    it("tells the app its game and player id (joined)", async () => {
+        const socket = connect("s1");
+
+        await socket.send("create-game", { nickname: "Ketan" });
+
+        const session = (await sessions.get("s1"))!;
+        expect(socket.last("joined")).toEqual({
+            gameId: session.gameId,
+            playerId: session.playerId,
+        });
+        expect(session.gameId).toMatch(/^[A-Z2-9]{6}$/);
+    });
+
     it("creates a room and remembers the socket's session", async () => {
         const socket = connect("s1");
 
@@ -117,9 +137,21 @@ describe("join-game", () => {
     it("rejects an unknown game", async () => {
         const socket = connect("s1");
 
-        await socket.send("join-game", { nickname: "Ketan", gameId: "a".repeat(24) });
+        await socket.send("join-game", { nickname: "Ketan", gameId: "ZZZZZZ" });
 
         expect(socket.errors()).toEqual(["Please enter a valid game id"]);
+    });
+
+    it("accepts a code typed in lower case with spaces", async () => {
+        const host = connect("s-host");
+        await host.send("create-game", { nickname: "Host" });
+        const gameId = (await sessions.get("s-host"))!.gameId;
+        const guest = connect("s-guest");
+
+        await guest.send("join-game", { nickname: "Guest", gameId: `  ${gameId.toLowerCase()} ` });
+
+        expect(guest.errors()).toEqual([]);
+        expect((await app.games.get(gameId))!.players).toHaveLength(2);
     });
 
     it("joins an existing room", async () => {
@@ -150,7 +182,7 @@ describe("timer (start race)", () => {
     it("ignores a start request for another game", async () => {
         const { host, gameId } = await hostAndGuest();
 
-        await host.send("timer", { gameId: "b".repeat(24) });
+        await host.send("timer", { gameId: "ZZZZZZ" });
 
         expect(app.raceClock.isRunning(gameId)).toBe(false);
     });
@@ -165,6 +197,39 @@ describe("userInput", () => {
         await host.send("userInput", { userInput: "the ", gameId });
 
         expect((await app.games.get(gameId))!.players[0]!.wordIndex).toBe(1);
+    });
+});
+
+describe("errors", () => {
+    it("answers a malformed payload with error-message BAD_REQUEST", async () => {
+        const { host, gameId } = await hostAndGuest();
+
+        await host.send("userInput", { gameId, userInput: 42 });
+
+        expect(host.errorMessages()).toEqual([{ code: "BAD_REQUEST", message: "Invalid request" }]);
+    });
+
+    it("answers a guest changing settings with error-message FORBIDDEN", async () => {
+        const { guest, gameId } = await hostAndGuest();
+
+        await guest.send("update-settings", { gameId, settings: { mode: "sudden-death" } });
+
+        expect(guest.errorMessages()).toEqual([
+            { code: "FORBIDDEN", message: "Only the host can do that" },
+        ]);
+        expect(guest.errors()).toEqual([]); // not shown as a create/join error
+    });
+
+    it("answers an unexpected failure with INTERNAL and logs it", async () => {
+        app.quoteProvider.willFail();
+        const socket = connect("s1");
+
+        await socket.send("create-game", { nickname: "Ketan" });
+
+        expect(socket.errorMessages()).toEqual([
+            { code: "INTERNAL", message: "Couldn't create a room right now. Please try again." },
+        ]);
+        expect(logger.error).toHaveBeenCalled();
     });
 });
 
@@ -200,6 +265,7 @@ describe("leaving and reconnecting", () => {
         const players = (await app.games.get(gameId))!.players;
         expect(players).toHaveLength(2);
         expect(players[1]!.socketId).toBe("s-guest-2");
+        expect(again.last("joined")).toEqual({ gameId, playerId });
     });
 
     it("a removed player who tries to rejoin is told so", async () => {

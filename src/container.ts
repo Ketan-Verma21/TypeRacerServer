@@ -5,7 +5,10 @@ import { InMemoryGameRepository } from "./adapters/memory/InMemoryGameRepository
 import { InMemoryRateLimiter } from "./adapters/memory/InMemoryRateLimiter";
 import { InMemorySessionStore } from "./adapters/memory/InMemorySessionStore";
 import { IntervalScheduler } from "./adapters/IntervalScheduler";
+import path from "node:path";
 import { ApiNinjasQuoteProvider } from "./adapters/quotes/ApiNinjasQuoteProvider";
+import { FallbackQuoteProvider } from "./adapters/quotes/FallbackQuoteProvider";
+import { LocalQuoteProvider } from "./adapters/quotes/LocalQuoteProvider";
 import { RandomIdGenerator } from "./adapters/RandomIdGenerator";
 import { SocketIoNotifier } from "./adapters/socket/SocketIoNotifier";
 import { SystemClock } from "./adapters/SystemClock";
@@ -33,8 +36,17 @@ export function buildContainer(config: Config, io: IoServer, logger: Logger): So
     const sessions = new InMemorySessionStore();
     const limiter = new InMemoryRateLimiter(clock);
 
+    // API Ninjas first; bundled quotes if it fails (or no key is set)
+    const localQuotes = LocalQuoteProvider.fromFile(
+        path.join(__dirname, "..", "data", "quotes.json"),
+    );
+    const quoteSources = config.quotesApiKey
+        ? [new ApiNinjasQuoteProvider(config.quotesApiUrl, config.quotesApiKey), localQuotes]
+        : [localQuotes];
     const quotes = new QuoteService(
-        new ApiNinjasQuoteProvider(config.quotesApiUrl, config.quotesApiKey),
+        new FallbackQuoteProvider(quoteSources, (err, index) =>
+            logger.warn("quote source failed, trying the next one", { index, err: String(err) }),
+        ),
     );
     const raceClock = new RaceClock({ games, notifier, clock, scheduler });
     const gameService = new GameService({

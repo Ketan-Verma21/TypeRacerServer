@@ -17,7 +17,9 @@ export const ServerEvents = {
     updateGame: "updateGame",
     timer: "timer",
     done: "done",
-    notCorrectGame: "notCorrectGame",
+    notCorrectGame: "notCorrectGame", // v1: shown on the create/join screens
+    errorMessage: "error-message", // {code, message} for any failed request
+    joined: "joined", // {gameId, playerId}: who this connection is
     chatMessage: "chat-message",
     chatHistory: "chat-history",
     reaction: "reaction",

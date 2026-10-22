@@ -49,7 +49,7 @@ export class GameService {
         const settings = { ...DEFAULT_SETTINGS };
         const player = createPlayer({ id: ids.playerId(), nickname, socketId, now, isHost: true });
         const game: Game = {
-            id: ids.gameId(),
+            id: await this.newRoomCode(),
             phase: "lobby",
             words: await quotes.getWords(QUOTE_LENGTHS[settings.length]),
             players: [player],
@@ -217,6 +217,15 @@ export class GameService {
     }
 
     // ───────────── helpers ─────────────
+
+    /** A room code nobody is using (codes are short, so collisions are possible). */
+    private async newRoomCode(): Promise<GameId> {
+        for (let attempt = 0; attempt < 10; attempt++) {
+            const code = this.deps.ids.gameId();
+            if (!(await this.deps.games.exists(code))) return code;
+        }
+        throw new Error("Could not find a free room code");
+    }
 
     private requireNickname(raw: unknown): string {
         const nickname = cleanNickname(raw);

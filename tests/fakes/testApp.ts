@@ -17,14 +17,16 @@ import { FakeQuoteProvider } from "./FakeQuoteProvider";
 import { FakeScheduler } from "./FakeScheduler";
 import { SequentialIdGenerator } from "./SequentialIdGenerator";
 
-export function createTestApp(options: { ids?: IdGenerator } = {}) {
+export function createTestApp<I extends IdGenerator = SequentialIdGenerator>(
+    options: { ids?: I } = {},
+) {
     const clock = new FakeClock();
     const scheduler = new FakeScheduler(clock);
     const notifier = new FakeNotifier();
     const quoteProvider = new FakeQuoteProvider("the quick brown fox");
     const games = new InMemoryGameRepository();
     const chat = new InMemoryChatRepository();
-    const ids = options.ids ?? new SequentialIdGenerator();
+    const ids = (options.ids ?? new SequentialIdGenerator()) as I;
     const raceClock = new RaceClock({ games, notifier, clock, scheduler });
     const quotes = new QuoteService(quoteProvider);
     const gameService = new GameService({
@@ -86,6 +88,7 @@ export function createTestApp(options: { ids?: IdGenerator } = {}) {
         games,
         chat,
         raceClock,
+        ids,
         gameService,
         chatService,
         presence,

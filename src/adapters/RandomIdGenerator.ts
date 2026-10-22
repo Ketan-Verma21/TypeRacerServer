@@ -1,15 +1,14 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
+import { generateRoomCode } from "../domain/roomCode";
 import type { IdGenerator } from "../ports/IdGenerator";
 
-/**
- * Game ids are 24 hex characters for now, because the v1 app only accepts
- * that format. Phase 2 switches to 6-character room codes.
- */
 export class RandomIdGenerator implements IdGenerator {
+    /** 6-character room code (uniqueness is checked by GameService). */
     gameId(): string {
-        return randomBytes(12).toString("hex");
+        return generateRoomCode((max) => randomInt(max));
     }
 
+    /** Long and unguessable: it is what a client uses to rejoin after a drop. */
     playerId(): string {
         return randomBytes(12).toString("hex");
     }

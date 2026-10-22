@@ -1,15 +1,17 @@
-// Thin socket handlers: read the payload + session, call ONE service method,
-// report errors. No game rules here (they live in services/ and domain/).
-import { DomainError } from "../../domain/errors";
-import { isValidGameId } from "../../domain/gameId";
+// Thin socket handlers: validated payload + session -> ONE service call.
+// No game rules here (services/ and domain/), no error plumbing (withHandler).
+import { isValidRoomCode, normalizeRoomCode } from "../../domain/roomCode";
 import type { Session } from "../../domain/types";
 import type { Logger } from "../../ports/Logger";
 import type { SessionStore } from "../../ports/SessionStore";
 import type { ChatService } from "../../services/ChatService";
 import type { GameService, JoinResult } from "../../services/GameService";
 import type { PresenceService } from "../../services/PresenceService";
+import { ValidationError } from "../../domain/errors";
 import { ClientEvents, ServerEvents } from "./events";
+import { Schemas } from "./schemas";
 import type { IoServer, ServerSocket } from "./types";
+import { createOn } from "./withHandler";
 
 /** Lets the room adapter know which sockets exist (for joining rooms by socket id). */
 export interface ConnectionTracker {
@@ -26,9 +28,7 @@ export interface SocketHandlerDeps {
     logger: Logger;
 }
 
-type Payload = Record<string, unknown>;
-const asPayload = (data: unknown): Payload =>
-    data !== null && typeof data === "object" ? (data as Payload) : {};
+const BAD_ROOM_CODE = "Please enter a valid game id";
 
 export function registerSocketHandlers(io: IoServer, deps: SocketHandlerDeps): void {
     io.on("connection", (socket) => handleConnection(socket, deps));
@@ -36,103 +36,89 @@ export function registerSocketHandlers(io: IoServer, deps: SocketHandlerDeps): v
 
 export function handleConnection(socket: ServerSocket, deps: SocketHandlerDeps): void {
     const { gameService, chatService, presence, sessions, connections, logger } = deps;
+    const on = createOn(socket, logger);
     connections.track(socket);
 
-    /** Runs `fn`; expected (domain) errors are ignored or reported, others logged. */
-    const on = (
-        event: string,
-        fn: (data: Payload) => Promise<void>,
-        onDomainError?: (err: DomainError) => void,
-    ) => {
-        socket.on(event, (data: unknown) => {
-            fn(asPayload(data)).catch((err: unknown) => {
-                if (err instanceof DomainError) return onDomainError?.(err);
-                logger.error("socket handler failed", {
-                    event,
-                    socketId: socket.id,
-                    err: String(err),
-                });
-                if (event === ClientEvents.createGame || event === ClientEvents.joinGame) {
-                    socket.emit(
-                        ServerEvents.notCorrectGame,
-                        `Couldn't ${event === ClientEvents.createGame ? "create" : "join"} a room right now. Please try again.`,
-                    );
-                }
-            });
-        });
-    };
-    const tellPlayer = (err: DomainError) => socket.emit(ServerEvents.notCorrectGame, err.message);
-
-    /** The session of this socket, only if it belongs to `gameId`. */
-    const sessionFor = async (gameId: unknown): Promise<Session | null> => {
+    /** This socket's session, only if it belongs to `gameId`. */
+    const sessionFor = async (gameId: string): Promise<Session | null> => {
         const s = await sessions.get(socket.id);
-        return s && s.gameId === gameId ? s : null;
+        return s && s.gameId === normalizeRoomCode(gameId) ? s : null;
     };
-    const remember = async ({ game, player }: JoinResult) => {
+    /** Remember who this connection is, and tell the app. */
+    const joined = async ({ game, player }: JoinResult) => {
         await sessions.set(socket.id, {
             gameId: game.id,
             playerId: player.id,
             nickname: player.nickname,
         });
+        socket.emit(ServerEvents.joined, { gameId: game.id, playerId: player.id });
     };
 
     on(
         ClientEvents.createGame,
-        async (d) => remember(await gameService.createGame(d.nickname, socket.id)),
-        tellPlayer,
+        Schemas.createGame,
+        async (d) => joined(await gameService.createGame(d.nickname, socket.id)),
+        {
+            showOnScreen: true,
+            invalidMessage: "Please enter your name",
+            failureMessage: "Couldn't create a room right now. Please try again.",
+        },
     );
 
     on(
         ClientEvents.joinGame,
+        Schemas.joinGame,
         async (d) => {
-            if (!isValidGameId(d.gameId)) {
-                socket.emit(ServerEvents.notCorrectGame, "Please enter a valid game id");
-                return;
-            }
-            await remember(await gameService.joinGame(d.gameId, d.nickname, socket.id));
+            const code = normalizeRoomCode(d.gameId);
+            if (!isValidRoomCode(code)) throw new ValidationError(BAD_ROOM_CODE);
+            await joined(await gameService.joinGame(code, d.nickname, socket.id));
         },
-        tellPlayer,
+        {
+            showOnScreen: true,
+            invalidMessage: BAD_ROOM_CODE,
+            failureMessage: "Couldn't join the room right now. Please try again.",
+        },
     );
 
-    on(ClientEvents.updateSettings, async (d) => {
+    on(ClientEvents.updateSettings, Schemas.updateSettings, async (d) => {
         const s = await sessionFor(d.gameId);
-        if (s) await gameService.updateSettings(s, asPayload(d.settings));
+        if (s) await gameService.updateSettings(s, d.settings);
     });
 
-    // The host comes from the session, never from the payload's playerId.
-    on(ClientEvents.startTimer, async (d) => {
+    // The host comes from the session, never from the payload.
+    on(ClientEvents.startTimer, Schemas.startTimer, async (d) => {
         const s = await sessionFor(d.gameId);
         if (s) await gameService.startRace(s);
     });
 
-    on(ClientEvents.userInput, async (d) => {
-        if (typeof d.userInput !== "string" || !d.userInput.trim()) return;
+    on(ClientEvents.userInput, Schemas.userInput, async (d) => {
+        if (!d.userInput.trim()) return;
         const s = await sessionFor(d.gameId);
         if (s) await gameService.submitWord(s, d.userInput);
     });
 
-    on(ClientEvents.rematch, async (d) => {
+    on(ClientEvents.rematch, Schemas.rematch, async (d) => {
         const s = await sessionFor(d.gameId);
         if (s) await gameService.rematch(s);
     });
 
-    on(ClientEvents.chatMessage, async (d) => {
+    on(ClientEvents.chatMessage, Schemas.chatMessage, async (d) => {
         const s = await sessionFor(d.gameId);
         if (s) await chatService.send(s, socket.id, d.text);
     });
 
-    on(ClientEvents.chatSync, async (d) => {
+    on(ClientEvents.chatSync, Schemas.chatSync, async (d) => {
         const s = await sessionFor(d.gameId);
         if (s) await chatService.sendHistory(s, socket.id);
     });
 
-    on(ClientEvents.reaction, async (d) => {
+    on(ClientEvents.reaction, Schemas.reaction, async (d) => {
         const s = await sessionFor(d.gameId);
         if (s) await chatService.react(s, socket.id, d.emoji);
     });
 
     // "Back to Home" or the game screen closed: leave right away.
-    on(ClientEvents.leaveGame, async (d) => {
+    on(ClientEvents.leaveGame, Schemas.leaveGame, async (d) => {
         const s = await sessionFor(d.gameId);
         if (!s) return; // already left / not ours
         await sessions.delete(socket.id);
@@ -143,13 +129,17 @@ export function handleConnection(socket: ServerSocket, deps: SocketHandlerDeps):
     // A reconnecting client (new socket id) reattaches to its player.
     on(
         ClientEvents.rejoinGame,
+        Schemas.rejoinGame,
         async (d) => {
-            if (typeof d.gameId !== "string" || typeof d.playerId !== "string") return;
-            const result = await gameService.reattach(d.gameId, d.playerId, socket.id);
+            const result = await gameService.reattach(
+                normalizeRoomCode(d.gameId),
+                d.playerId,
+                socket.id,
+            );
             presence.reconnected(d.playerId);
-            await remember(result);
+            await joined(result);
         },
-        tellPlayer,
+        { showOnScreen: true },
     );
 
     // Connection dropped: give the player a grace period to come back.

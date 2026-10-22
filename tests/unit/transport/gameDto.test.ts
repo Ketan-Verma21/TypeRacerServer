@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { toGameDto } from "../../../src/transport/socket/gameDto";
+import { Schemas } from "../../../src/transport/socket/schemas";
 import { makeGame, makePlayer } from "../../fakes/builders";
 
 describe("toGameDto (v1-compatible updateGame payload)", () => {
@@ -52,5 +53,17 @@ describe("toGameDto (v1-compatible updateGame payload)", () => {
         expect("startTime" in toGameDto(makeGame({ phase: "lobby", startTime: undefined }))).toBe(
             false,
         );
+    });
+});
+
+describe("Schemas", () => {
+    it("drops fields the server doesn't use (v1 sends playerId with timer)", () => {
+        expect(Schemas.startTimer.parse({ gameId: "K7P2QX", playerId: "someone" })).toEqual({
+            gameId: "K7P2QX",
+        });
+    });
+
+    it("rejects a word that is not text", () => {
+        expect(Schemas.userInput.safeParse({ gameId: "K7P2QX", userInput: 5 }).success).toBe(false);
     });
 });

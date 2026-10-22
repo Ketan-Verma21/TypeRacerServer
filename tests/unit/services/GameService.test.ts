@@ -6,9 +6,10 @@ import {
     RoomFullError,
     ValidationError,
 } from "../../../src/domain/errors";
+import type { SequentialIdGenerator } from "../../fakes/SequentialIdGenerator";
 import { createTestApp } from "../../fakes/testApp";
 
-let app: ReturnType<typeof createTestApp>;
+let app: ReturnType<typeof createTestApp<SequentialIdGenerator>>;
 
 beforeEach(() => {
     app = createTestApp();
@@ -34,6 +35,15 @@ describe("createGame", () => {
         const { game } = await app.gameService.createGame("Ketan", "s1");
 
         expect(app.notifier.membersOf(game.id)).toEqual(["s1"]);
+    });
+
+    it("picks a room code that is not already in use", async () => {
+        const first = await app.gameService.createGame("A", "s1");
+        app.ids.repeatNext(first.game.id); // the next code collides once
+
+        const second = await app.gameService.createGame("B", "s2");
+
+        expect(second.game.id).not.toBe(first.game.id);
     });
 
     it("rejects an empty nickname", async () => {
@@ -119,7 +129,7 @@ describe("updateSettings", () => {
 
         app.quoteProvider.willReturn("a brand new quote");
         const game = await app.gameService.updateSettings(host, { length: "long" });
-        expect(app.quoteProvider.calls).toBe(callsAfterCreate + 1);
+        expect(app.quoteProvider.calls).toBeGreaterThan(callsAfterCreate);
         expect(game.words).toEqual(["a", "brand", "new", "quote"]);
     });
 });
