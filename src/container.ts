@@ -6,6 +6,7 @@ import { InMemoryRateLimiter } from "./adapters/memory/InMemoryRateLimiter";
 import { InMemorySessionStore } from "./adapters/memory/InMemorySessionStore";
 import { RedisChatRepository } from "./adapters/redis/RedisChatRepository";
 import { RedisGameRepository } from "./adapters/redis/RedisGameRepository";
+import { RedisQuotePool } from "./adapters/redis/RedisQuotePool";
 import { RedisRateLimiter } from "./adapters/redis/RedisRateLimiter";
 import { RedisSessionStore } from "./adapters/redis/RedisSessionStore";
 import { IntervalScheduler } from "./adapters/IntervalScheduler";
@@ -23,6 +24,7 @@ import type { ChatRepository } from "./ports/ChatRepository";
 import type { Clock } from "./ports/Clock";
 import type { GameRepository } from "./ports/GameRepository";
 import type { Logger } from "./ports/Logger";
+import type { QuoteProvider } from "./ports/QuoteProvider";
 import type { RateLimiter } from "./ports/RateLimiter";
 import type { SessionStore } from "./ports/SessionStore";
 import { ChatService } from "./services/ChatService";
@@ -32,6 +34,9 @@ import { QuoteService } from "./services/QuoteService";
 import { RaceClock } from "./services/RaceClock";
 import type { SocketHandlerDeps } from "./transport/socket/registerSocketHandlers";
 import type { IoServer } from "./transport/socket/types";
+
+/** How often each server tops up the shared quote pool. */
+const QUOTE_POOL_REFILL_MS = 30_000;
 
 export interface Stores {
     games: GameRepository;
@@ -77,13 +82,28 @@ export function buildContainer(
 
     const { games, chat, sessions, limiter } = createStores(config.store, clock, redis);
 
-    // API Ninjas first; bundled quotes if it fails (or no key is set)
+    // Quote sources, tried in order: Redis pool (pre-fetched) -> API Ninjas
+    // live -> bundled quotes. The pool and API are only used with an API key.
     const localQuotes = LocalQuoteProvider.fromFile(
         path.join(__dirname, "..", "data", "quotes.json"),
     );
-    const quoteSources = config.quotesApiKey
-        ? [new ApiNinjasQuoteProvider(config.quotesApiUrl, config.quotesApiKey), localQuotes]
-        : [localQuotes];
+    const apiQuotes = config.quotesApiKey
+        ? new ApiNinjasQuoteProvider(config.quotesApiUrl, config.quotesApiKey)
+        : undefined;
+    const quoteSources: QuoteProvider[] = [];
+    if (apiQuotes && redis && config.store === "redis") {
+        const pool = new RedisQuotePool(redis, apiQuotes, {
+            onError: (err) => logger.warn("quote pool refill failed", { err: String(err) }),
+        });
+        quoteSources.push(pool);
+        const refill = async (): Promise<void> => {
+            await pool.refill();
+        };
+        scheduler.after(0, refill); // fill it at startup
+        scheduler.every(QUOTE_POOL_REFILL_MS, refill);
+    }
+    if (apiQuotes) quoteSources.push(apiQuotes);
+    quoteSources.push(localQuotes);
     const quotes = new QuoteService(
         new FallbackQuoteProvider(quoteSources, (err, index) =>
             logger.warn("quote source failed, trying the next one", { index, err: String(err) }),
