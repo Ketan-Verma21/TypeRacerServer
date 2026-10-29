@@ -11,6 +11,7 @@ export const ClientEvents = {
     reaction: "reaction",
     leaveGame: "leave-game",
     rejoinGame: "rejoin-game",
+    getLeaderboard: "get-leaderboard",
 } as const;
 
 export const ServerEvents = {
@@ -23,4 +24,5 @@ export const ServerEvents = {
     chatMessage: "chat-message",
     chatHistory: "chat-history",
     reaction: "reaction",
+    leaderboard: "leaderboard", // {mode, entries: [{nickname, wpm}]}
 } as const;

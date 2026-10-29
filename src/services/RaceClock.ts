@@ -3,10 +3,12 @@
 // Redis-driven sweeper so any server instance can run the clock.
 import { COUNTDOWN_SECONDS } from "../config/constants";
 import { wpmAt } from "../domain/modes/ModeStrategy";
+import { matchFinished } from "../domain/events";
 import { racersOf } from "../domain/rules";
 import { formatClock } from "../domain/time";
 import type { GameId } from "../domain/types";
 import type { Clock } from "../ports/Clock";
+import type { EventPublisher } from "../ports/EventPublisher";
 import type { GameRepository } from "../ports/GameRepository";
 import type { Notifier } from "../ports/Notifier";
 import type { Scheduler } from "../ports/Scheduler";
@@ -16,6 +18,7 @@ export interface RaceClockDeps {
     notifier: Notifier;
     clock: Clock;
     scheduler: Scheduler;
+    events: EventPublisher;
 }
 
 export class RaceClock {
@@ -59,7 +62,7 @@ export class RaceClock {
         if (this.finishing.has(gameId)) return; // already ending
         this.finishing.add(gameId);
         try {
-            const { games, notifier, clock } = this.deps;
+            const { games, notifier, clock, events } = this.deps;
             const game = await games.get(gameId);
             if (!game || game.phase === "over") return;
 
@@ -74,6 +77,8 @@ export class RaceClock {
             const over = await games.get(gameId);
             if (over) notifier.gameChanged(over);
             notifier.raceOver(gameId);
+            // Stats after the players are told. Fire and forget: never delays or breaks the race.
+            if (over) void events.publish(matchFinished(over, now));
         } finally {
             this.finishing.delete(gameId);
         }

@@ -2,6 +2,7 @@
 // before it reaches a service. Unknown extra fields are dropped (e.g. the
 // v1 app still sends `playerId` with "timer"; it is ignored).
 import { z } from "zod";
+import { MODE_IDS } from "../../config/constants";
 
 const gameId = z.string().max(32);
 
@@ -17,4 +18,5 @@ export const Schemas = {
     reaction: z.object({ gameId, emoji: z.string().max(16) }),
     leaveGame: z.object({ gameId }),
     rejoinGame: z.object({ gameId, playerId: z.string().max(64) }),
+    getLeaderboard: z.object({ mode: z.enum(MODE_IDS) }),
 } as const;

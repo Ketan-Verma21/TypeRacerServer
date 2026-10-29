@@ -52,6 +52,7 @@ function connect(id: string): FakeSocket {
         gameService: app.gameService,
         chatService: app.chatService,
         presence: app.presence,
+        statsService: app.statsService,
         sessions,
         connections: { track: () => {}, untrack: () => {} },
         logger,
@@ -275,5 +276,31 @@ describe("leaving and reconnecting", () => {
         await socket.send("rejoin-game", { gameId, playerId: "ghost" });
 
         expect(socket.errors()).toEqual(["You were removed from this game"]);
+    });
+});
+
+describe("get-leaderboard", () => {
+    it("answers with the top players of a mode", async () => {
+        await app.leaderboard.record("classic", "Ana", 80);
+        await app.leaderboard.record("classic", "Ben", 95);
+        const socket = connect("s1");
+
+        await socket.send("get-leaderboard", { mode: "classic" });
+
+        expect(socket.last("leaderboard")).toEqual({
+            mode: "classic",
+            entries: [
+                { nickname: "Ben", wpm: 95 },
+                { nickname: "Ana", wpm: 80 },
+            ],
+        });
+    });
+
+    it("rejects an unknown mode", async () => {
+        const socket = connect("s1");
+
+        await socket.send("get-leaderboard", { mode: "speedrun" });
+
+        expect(socket.errorMessages()).toEqual([expect.objectContaining({ code: "BAD_REQUEST" })]);
     });
 });

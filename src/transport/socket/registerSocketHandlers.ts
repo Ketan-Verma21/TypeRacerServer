@@ -7,6 +7,7 @@ import type { SessionStore } from "../../ports/SessionStore";
 import type { ChatService } from "../../services/ChatService";
 import type { GameService, JoinResult } from "../../services/GameService";
 import type { PresenceService } from "../../services/PresenceService";
+import type { StatsService } from "../../services/StatsService";
 import { ValidationError } from "../../domain/errors";
 import { ClientEvents, ServerEvents } from "./events";
 import { Schemas } from "./schemas";
@@ -23,6 +24,7 @@ export interface SocketHandlerDeps {
     gameService: GameService;
     chatService: ChatService;
     presence: PresenceService;
+    statsService: StatsService;
     sessions: SessionStore;
     connections: ConnectionTracker;
     logger: Logger;
@@ -35,7 +37,8 @@ export function registerSocketHandlers(io: IoServer, deps: SocketHandlerDeps): v
 }
 
 export function handleConnection(socket: ServerSocket, deps: SocketHandlerDeps): void {
-    const { gameService, chatService, presence, sessions, connections, logger } = deps;
+    const { gameService, chatService, presence, statsService, sessions, connections, logger } =
+        deps;
     const on = createOn(socket, logger);
     connections.track(socket);
 
@@ -141,6 +144,12 @@ export function handleConnection(socket: ServerSocket, deps: SocketHandlerDeps):
         },
         { showOnScreen: true },
     );
+
+    // Anyone may look at the leaderboard; no room needed.
+    on(ClientEvents.getLeaderboard, Schemas.getLeaderboard, async (d) => {
+        const entries = await statsService.topPlayers(d.mode);
+        socket.emit(ServerEvents.leaderboard, { mode: d.mode, entries });
+    });
 
     // Connection dropped: give the player a grace period to come back.
     socket.on("disconnect", () => {
