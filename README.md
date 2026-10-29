@@ -126,6 +126,8 @@ tests/
 | `leaderboard:{mode}`      | sorted set | nickname → best WPM                           |
 | `matches:recent`          | list       | last 500 finished races                       |
 
+With several servers, the **Socket.IO Redis adapter** passes messages between them over Redis pub/sub: when one server sends a room update, players connected to any server receive it.
+
 Every room key expires **2 hours** after the room's last activity. Changes that must not be interrupted run as **Lua scripts**, which Redis runs as one step — for example "count the racers and add a player only if there's a seat", so two people can never both take the last seat.
 
 ---
@@ -174,7 +176,7 @@ npm run lint
 - **Real Redis**: with `docker compose up -d redis` running:
 
 ```bash
-REDIS_TEST_URL=redis://localhost:6379/15 npm run test:redis     # same suites on real Redis
+REDIS_TEST_URL=redis://localhost:6379/15 npm run test:redis     # same suites on real Redis + two servers sharing it
 REDIS_TEST_URL=redis://localhost:6379/15 npm run bench:redis    # latency benchmark
 ```
 

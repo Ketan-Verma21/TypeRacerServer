@@ -151,7 +151,6 @@ export function buildContainer(
         presence,
         statsService,
         sessions,
-        connections: notifier,
         logger,
     };
 }

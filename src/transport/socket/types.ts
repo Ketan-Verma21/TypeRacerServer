@@ -12,7 +12,14 @@ export interface ServerSocket extends Emitter {
     leave(room: string): unknown;
 }
 
+/** Sockets in a room (or one socket, by its id) — on any server instance. */
+export interface RoomTarget {
+    socketsJoin(room: string): void;
+    socketsLeave(room: string): void;
+}
+
 export interface IoServer {
     to(room: string): Emitter;
+    in(room: string): RoomTarget;
     on(event: "connection", listener: (socket: ServerSocket) => void): unknown;
 }

@@ -6,6 +6,7 @@ import { loadConfig } from "./config/env";
 import { buildContainer } from "./container";
 import { PinoLogger } from "./infra/PinoLogger";
 import { createRedisClient, isRedisReady } from "./infra/redis";
+import { attachRedisAdapter } from "./infra/redisAdapter";
 import { createSocketServer } from "./transport/socket/createSocketServer";
 import { registerSocketHandlers } from "./transport/socket/registerSocketHandlers";
 import type { IoServer } from "./transport/socket/types";
@@ -22,11 +23,21 @@ const isReady = redis ? () => isRedisReady(redis) : undefined;
 
 const server = http.createServer(createHttpApp({ isReady }));
 const socketServer = createSocketServer(server);
+// With Redis, broadcasts reach players on every server instance (Phase 5).
+const closeAdapter = redis
+    ? attachRedisAdapter(socketServer, redis, (err) =>
+          logger.warn("redis pub/sub error", { err: err.message }),
+      )
+    : async () => {};
 const io = socketServer as unknown as IoServer;
 registerSocketHandlers(io, buildContainer(config, io, logger, redis));
 
 server.listen(config.port, "0.0.0.0", () => {
-    logger.info("Type Racer server listening", { port: config.port, store: config.store });
+    logger.info("Type Racer server listening", {
+        port: config.port,
+        store: config.store,
+        instanceId: config.instanceId,
+    });
 });
 
 // `docker compose stop/restart` sends SIGTERM. Without a handler Node (PID 1 in
@@ -37,7 +48,7 @@ function shutdown(signal: string): void {
     stopping = true;
     logger.info("shutting down", { signal });
     socketServer.close(); // also closes the HTTP server
-    void (redis?.quit() ?? Promise.resolve()).finally(() => process.exit(0));
+    void Promise.allSettled([closeAdapter(), redis?.quit()]).finally(() => process.exit(0));
     setTimeout(() => process.exit(0), 3000).unref(); // don't wait forever
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));

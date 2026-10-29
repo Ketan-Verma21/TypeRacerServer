@@ -3,32 +3,23 @@ import type { Notifier, TimerUpdate } from "../../ports/Notifier";
 import type { RoomMembership } from "../../ports/RoomMembership";
 import { ServerEvents } from "../../transport/socket/events";
 import { toGameDto } from "../../transport/socket/gameDto";
-import type { IoServer, ServerSocket } from "../../transport/socket/types";
+import type { IoServer } from "../../transport/socket/types";
 
 /**
  * Turns service notifications into Socket.IO events. Every socket is in a
  * room named after its own id, so `io.to(socketId)` reaches one player.
+ * With the Redis adapter, all of this works across server instances.
  */
 export class SocketIoNotifier implements Notifier, RoomMembership {
-    private readonly sockets = new Map<string, ServerSocket>();
-
     constructor(private readonly io: IoServer) {}
 
-    /** The socket layer registers each connection so rooms can be joined by id. */
-    track(socket: ServerSocket): void {
-        this.sockets.set(socket.id, socket);
-    }
-
-    untrack(socketId: string): void {
-        this.sockets.delete(socketId);
-    }
-
+    // `in(socketId)` = that one socket, wherever it is connected.
     async join(socketId: string, gameId: GameId): Promise<void> {
-        this.sockets.get(socketId)?.join(gameId);
+        this.io.in(socketId).socketsJoin(gameId);
     }
 
     async leave(socketId: string, gameId: GameId): Promise<void> {
-        this.sockets.get(socketId)?.leave(gameId);
+        this.io.in(socketId).socketsLeave(gameId);
     }
 
     gameChanged(game: Game): void {

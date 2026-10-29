@@ -54,7 +54,6 @@ function connect(id: string): FakeSocket {
         presence: app.presence,
         statsService: app.statsService,
         sessions,
-        connections: { track: () => {}, untrack: () => {} },
         logger,
     });
     return socket;
