@@ -139,7 +139,7 @@ describe("startRace", () => {
         const { guests } = await app.lobbyWith("guest");
 
         await expect(app.gameService.startRace(guests[0]!)).rejects.toThrow(ForbiddenError);
-        expect(app.raceClock.isRunning(guests[0]!.gameId)).toBe(false);
+        expect(await app.raceClock.isRunning(guests[0]!.gameId)).toBe(false);
     });
 
     it("counts down 5..0, then starts the race clock", async () => {
@@ -263,7 +263,7 @@ describe("race clock", () => {
         const game = await app.games.get(gameId);
         expect(game!.phase).toBe("over");
         expect(game!.players[0]!.wpm).toBeGreaterThan(-1);
-        expect(app.raceClock.isRunning(gameId)).toBe(false);
+        expect(await app.raceClock.isRunning(gameId)).toBe(false);
     });
 });
 
@@ -352,7 +352,7 @@ describe("leaveGame", () => {
 
         await app.gameService.leaveGame(gameId, host.playerId);
 
-        expect(app.raceClock.isRunning(gameId)).toBe(false);
+        expect(await app.raceClock.isRunning(gameId)).toBe(false);
     });
 });
 

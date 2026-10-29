@@ -5,6 +5,7 @@ import { InMemoryChatRepository } from "../../src/adapters/memory/InMemoryChatRe
 import { InMemoryGameRepository } from "../../src/adapters/memory/InMemoryGameRepository";
 import { InMemoryLeaderboard } from "../../src/adapters/memory/InMemoryLeaderboard";
 import { InMemoryMatchHistory } from "../../src/adapters/memory/InMemoryMatchHistory";
+import { InMemoryRaceSchedule } from "../../src/adapters/memory/InMemoryRaceSchedule";
 import { InMemoryRateLimiter } from "../../src/adapters/memory/InMemoryRateLimiter";
 import type { DomainEvent } from "../../src/domain/events";
 import { createDefaultModeRegistry } from "../../src/domain/modes/modeRegistry";
@@ -16,6 +17,7 @@ import { PresenceService } from "../../src/services/PresenceService";
 import { QuoteService } from "../../src/services/QuoteService";
 import { RaceClock } from "../../src/services/RaceClock";
 import { StatsService } from "../../src/services/StatsService";
+import { Sweeper } from "../../src/services/Sweeper";
 import { FakeClock } from "./FakeClock";
 import { FakeNotifier } from "./FakeNotifier";
 import { FakeQuoteProvider } from "./FakeQuoteProvider";
@@ -42,7 +44,28 @@ export function createTestApp<I extends IdGenerator = SequentialIdGenerator>(
         published.push(event);
     });
     events.subscribe((event) => statsService.onEvent(event));
-    const raceClock = new RaceClock({ games, notifier, clock, scheduler, events });
+    const schedule = new InMemoryRaceSchedule(clock);
+    const raceClock = new RaceClock({
+        games,
+        notifier,
+        clock,
+        schedule,
+        events,
+        onError: (err) => {
+            throw err; // tests should see clock errors
+        },
+    });
+    // the clock only moves when a test calls scheduler.tick()
+    new Sweeper(
+        {
+            clock,
+            scheduler,
+            onError: (err) => {
+                throw err;
+            },
+        },
+        [(now) => raceClock.sweep(now)],
+    ).start();
     const quotes = new QuoteService(quoteProvider);
     const gameService = new GameService({
         games,
@@ -103,6 +126,7 @@ export function createTestApp<I extends IdGenerator = SequentialIdGenerator>(
         games,
         chat,
         raceClock,
+        schedule,
         ids,
         gameService,
         chatService,

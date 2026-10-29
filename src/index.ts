@@ -30,7 +30,8 @@ const closeAdapter = redis
       )
     : async () => {};
 const io = socketServer as unknown as IoServer;
-registerSocketHandlers(io, buildContainer(config, io, logger, redis));
+const container = buildContainer(config, io, logger, redis);
+registerSocketHandlers(io, container);
 
 server.listen(config.port, "0.0.0.0", () => {
     logger.info("Type Racer server listening", {
@@ -47,6 +48,7 @@ function shutdown(signal: string): void {
     if (stopping) return;
     stopping = true;
     logger.info("shutting down", { signal });
+    container.stop(); // no more sweeps from this instance; the others carry on
     socketServer.close(); // also closes the HTTP server
     void Promise.allSettled([closeAdapter(), redis?.quit()]).finally(() => process.exit(0));
     setTimeout(() => process.exit(0), 3000).unref(); // don't wait forever

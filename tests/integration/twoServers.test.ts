@@ -40,12 +40,14 @@ async function startServer(name: string): Promise<Instance> {
     const closeAdapter = attachRedisAdapter(ioServer, redis, () => {}, "socket.io-test");
     const io = ioServer as unknown as IoServer;
     const config = loadConfig({ STORE: "redis", REDIS_URL: url, INSTANCE_ID: name });
-    registerSocketHandlers(io, buildContainer(config, io, silent, redis));
+    const container = buildContainer(config, io, silent, redis);
+    registerSocketHandlers(io, container);
     httpServer.listen(0, "127.0.0.1");
     await once(httpServer, "listening");
     return {
         url: `http://127.0.0.1:${(httpServer.address() as AddressInfo).port}`,
         close: async () => {
+            container.stop();
             await new Promise<void>((resolve) => ioServer.close(() => resolve()));
             await closeAdapter();
             await redis.quit();

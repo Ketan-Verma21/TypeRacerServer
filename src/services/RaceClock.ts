@@ -1,9 +1,13 @@
 // Countdown (5..0) -> race clock (timeLimit..0) -> race over.
-// Timers live in this process for now; Phase 5 replaces them with a
-// Redis-driven sweeper so any server instance can run the clock.
+//
+// Nothing here keeps time in memory. A running game is one entry in the
+// RaceSchedule (game -> deadline, in Redis with STORE=redis), and every server
+// instance calls sweep() once a second (Sweeper). Claims make sure each tick is
+// sent once and each phase change happens once, whichever instance does it —
+// so a race keeps going if the server that started it dies or restarts.
 import { COUNTDOWN_SECONDS } from "../config/constants";
-import { wpmAt } from "../domain/modes/ModeStrategy";
 import { matchFinished } from "../domain/events";
+import { wpmAt } from "../domain/modes/ModeStrategy";
 import { racersOf } from "../domain/rules";
 import { formatClock } from "../domain/time";
 import type { GameId } from "../domain/types";
@@ -11,103 +15,128 @@ import type { Clock } from "../ports/Clock";
 import type { EventPublisher } from "../ports/EventPublisher";
 import type { GameRepository } from "../ports/GameRepository";
 import type { Notifier } from "../ports/Notifier";
-import type { Scheduler } from "../ports/Scheduler";
+import type { RaceSchedule } from "../ports/RaceSchedule";
 
 export interface RaceClockDeps {
     games: GameRepository;
     notifier: Notifier;
     clock: Clock;
-    scheduler: Scheduler;
+    schedule: RaceSchedule;
     events: EventPublisher;
+    /** One game failing must not stop the clock for the others. */
+    onError: (err: unknown, gameId: GameId) => void;
 }
 
-export class RaceClock {
-    private readonly timers = new Map<GameId, () => void>(); // gameId -> stop()
-    private readonly finishing = new Set<GameId>();
+/**
+ * Times are whole seconds, so every instance agrees on "which second is it"
+ * even though timers fire a few ms late (or instances differ slightly).
+ * A phase that shows N .. 0, one number per second, ends one second after the
+ * 0 — its deadline is (N + 1) s after the second that showed N.
+ */
+const wholeSecond = (ms: number): number => Math.round(ms / 1000) * 1000;
+const nextWholeSecond = (ms: number): number => Math.floor(ms / 1000) * 1000 + 1000;
+/** The countdown shows 5 at the first full second after Start. */
+const countdownDeadline = (now: number): number =>
+    nextWholeSecond(now) + (COUNTDOWN_SECONDS + 1) * 1000;
+/** The race shows the full time in the second it begins. */
+const raceDeadline = (second: number, timeLimit: number): number => second + (timeLimit + 1) * 1000;
+/** The number to show in `second` for a phase ending at `deadline` (-1 = nothing). */
+const shownAt = (deadline: number, second: number): number => (deadline - second) / 1000 - 1;
 
+export class RaceClock {
     constructor(private readonly deps: RaceClockDeps) {}
 
-    isRunning(gameId: GameId): boolean {
-        return this.timers.has(gameId);
+    async isRunning(gameId: GameId): Promise<boolean> {
+        return (await this.deps.schedule.deadlineOf(gameId)) !== null;
     }
 
-    /** Starts the countdown. Returns false if this game's clock is already running. */
+    /** Starts the countdown. false if this game's clock is already running (on any instance). */
     async start(gameId: GameId): Promise<boolean> {
-        if (this.isRunning(gameId)) return false;
-        const { games, notifier, scheduler } = this.deps;
+        const { games, schedule, clock } = this.deps;
+        if (!(await schedule.add(gameId, countdownDeadline(clock.now())))) return false;
         await games.updateMeta(gameId, { phase: "countdown" });
-
-        let countDown = COUNTDOWN_SECONDS;
-        const stop = scheduler.every(1000, async () => {
-            if (countDown >= 0) {
-                notifier.timer(gameId, { countDown, msg: "Game Starting" });
-                countDown--;
-                return;
-            }
-            stop();
-            await this.beginRace(gameId);
-        });
-        this.timers.set(gameId, stop);
         return true;
     }
 
-    stop(gameId: GameId): void {
-        this.timers.get(gameId)?.();
-        this.timers.delete(gameId);
+    async stop(gameId: GameId): Promise<void> {
+        await this.deps.schedule.remove(gameId);
     }
 
-    /** Ends the race: fills in WPM for unfinished racers and tells the room. */
-    async finishRace(gameId: GameId): Promise<void> {
-        this.stop(gameId);
-        if (this.finishing.has(gameId)) return; // already ending
-        this.finishing.add(gameId);
-        try {
-            const { games, notifier, clock, events } = this.deps;
-            const game = await games.get(gameId);
-            if (!game || game.phase === "over") return;
-
-            const now = clock.now();
-            for (const p of racersOf(game)) {
-                if (p.wpm === -1) {
-                    await games.updatePlayer(gameId, p.id, { wpm: wpmAt(game, p.wordIndex, now) });
+    /** Once a second, on every instance: send this second's ticks, handle deadlines. */
+    async sweep(now: number): Promise<void> {
+        const { schedule, onError } = this.deps;
+        const second = wholeSecond(now);
+        for (const { gameId, deadline } of await schedule.all()) {
+            try {
+                await this.tick(gameId, deadline, second);
+                if (deadline <= second && (await schedule.claim(gameId, deadline))) {
+                    await this.onDeadline(gameId, second);
                 }
+            } catch (err) {
+                onError(err, gameId);
             }
-            await games.updateMeta(gameId, { phase: "over" });
-
-            const over = await games.get(gameId);
-            if (over) notifier.gameChanged(over);
-            notifier.raceOver(gameId);
-            // Stats after the players are told. Fire and forget: never delays or breaks the race.
-            if (over) void events.publish(matchFinished(over, now));
-        } finally {
-            this.finishing.delete(gameId);
         }
     }
 
-    private async beginRace(gameId: GameId): Promise<void> {
-        const { games, notifier, clock, scheduler } = this.deps;
+    /** The race is over early (everyone finished or left). */
+    async finishRace(gameId: GameId): Promise<void> {
+        // If the claim fails, another instance (or the sweeper) is already ending it.
+        if (!(await this.deps.schedule.claim(gameId))) return;
+        await this.endRace(gameId, this.deps.clock.now());
+    }
+
+    private async tick(gameId: GameId, deadline: number, second: number): Promise<void> {
+        const { schedule, games, notifier } = this.deps;
+        const shown = shownAt(deadline, second);
+        if (shown < 0) return;
+        if (!(await schedule.claimTick(gameId, `${deadline}:${shown}`))) return; // sent by another instance
         const game = await games.get(gameId);
         if (!game) {
-            this.timers.delete(gameId); // everyone left during the countdown
+            await schedule.remove(gameId); // the room is gone
             return;
         }
-        await games.updateMeta(gameId, { phase: "racing", startTime: clock.now() });
+        if (game.phase === "countdown") {
+            notifier.timer(gameId, { countDown: shown, msg: "Game Starting" });
+        } else if (game.phase === "racing") {
+            notifier.timer(gameId, { countDown: formatClock(shown), msg: "Time Remaining" });
+        }
+    }
+
+    /** This instance claimed the deadline: move the game to its next phase. */
+    private async onDeadline(gameId: GameId, second: number): Promise<void> {
+        const game = await this.deps.games.get(gameId);
+        if (game?.phase === "countdown")
+            await this.beginRace(gameId, game.settings.timeLimit, second);
+        else if (game?.phase === "racing") await this.endRace(gameId, second);
+    }
+
+    private async beginRace(gameId: GameId, timeLimit: number, second: number): Promise<void> {
+        const { games, notifier, schedule } = this.deps;
+        await games.updateMeta(gameId, { phase: "racing", startTime: second });
+        const deadline = raceDeadline(second, timeLimit);
+        await schedule.add(gameId, deadline);
         const racing = await games.get(gameId);
         if (racing) notifier.gameChanged(racing);
+        await this.tick(gameId, deadline, second); // show the full time right away
+    }
 
-        let remaining = game.settings.timeLimit;
-        const tick = async () => {
-            if (remaining >= 0) {
-                notifier.timer(gameId, {
-                    countDown: formatClock(remaining),
-                    msg: "Time Remaining",
-                });
-                remaining--;
-            } else {
-                await this.finishRace(gameId);
+    /** Fills in WPM for unfinished racers and tells the room. */
+    private async endRace(gameId: GameId, now: number): Promise<void> {
+        const { games, notifier, events } = this.deps;
+        const game = await games.get(gameId);
+        if (!game || game.phase !== "racing") return;
+
+        for (const p of racersOf(game)) {
+            if (p.wpm === -1) {
+                await games.updatePlayer(gameId, p.id, { wpm: wpmAt(game, p.wordIndex, now) });
             }
-        };
-        await tick();
-        if (this.timers.has(gameId)) this.timers.set(gameId, scheduler.every(1000, tick));
+        }
+        await games.updateMeta(gameId, { phase: "over" });
+
+        const over = await games.get(gameId);
+        if (over) notifier.gameChanged(over);
+        notifier.raceOver(gameId);
+        // Stats after the players are told. Fire and forget: never delays or breaks the race.
+        if (over) void events.publish(matchFinished(over, now));
     }
 }

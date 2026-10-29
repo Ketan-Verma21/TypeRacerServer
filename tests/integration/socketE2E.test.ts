@@ -28,6 +28,7 @@ let httpServer: http.Server;
 let ioServer: Server;
 let url: string;
 let clients: Socket[] = [];
+let stopContainer: () => void;
 
 /** Resolves with the next `event` payload that matches, or fails after `ms`. */
 function next<T>(
@@ -76,7 +77,9 @@ beforeEach(async () => {
     httpServer = http.createServer(createHttpApp());
     ioServer = createSocketServer(httpServer);
     const io = ioServer as unknown as IoServer;
-    registerSocketHandlers(io, buildContainer(loadConfig({}), io, silent));
+    const container = buildContainer(loadConfig({}), io, silent);
+    registerSocketHandlers(io, container);
+    stopContainer = container.stop;
     httpServer.listen(0, "127.0.0.1");
     await once(httpServer, "listening");
     url = `http://127.0.0.1:${(httpServer.address() as AddressInfo).port}`;
@@ -85,6 +88,7 @@ beforeEach(async () => {
 afterEach(async () => {
     for (const c of clients) c.disconnect();
     clients = [];
+    stopContainer();
     await new Promise<void>((resolve) => ioServer.close(() => resolve()));
 });
 

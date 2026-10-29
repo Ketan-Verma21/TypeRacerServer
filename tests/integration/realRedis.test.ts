@@ -9,12 +9,14 @@ import { RedisChatRepository } from "../../src/adapters/redis/RedisChatRepositor
 import { RedisGameRepository } from "../../src/adapters/redis/RedisGameRepository";
 import { RedisLeaderboard } from "../../src/adapters/redis/RedisLeaderboard";
 import { RedisMatchHistory } from "../../src/adapters/redis/RedisMatchHistory";
+import { RedisRaceSchedule } from "../../src/adapters/redis/RedisRaceSchedule";
 import { RedisRateLimiter } from "../../src/adapters/redis/RedisRateLimiter";
 import { RedisSessionStore } from "../../src/adapters/redis/RedisSessionStore";
 import { runChatRepositoryContract } from "../contract/chatRepository.contract";
 import { runGameRepositoryContract } from "../contract/gameRepository.contract";
 import { runLeaderboardContract } from "../contract/leaderboard.contract";
 import { runMatchHistoryContract } from "../contract/matchHistory.contract";
+import { runRaceScheduleContract } from "../contract/raceSchedule.contract";
 import { runRateLimiterContract } from "../contract/rateLimiter.contract";
 import { runSessionStoreContract } from "../contract/sessionStore.contract";
 import { makeGame, makePlayer } from "../fakes/builders";
@@ -65,6 +67,11 @@ if (!url) {
         "RedisMatchHistory (real Redis)",
         async (maxRecent, maxPerGame) =>
             new RedisMatchHistory(await fresh(), maxRecent, maxPerGame),
+    );
+
+    runRaceScheduleContract(
+        "RedisRaceSchedule (real Redis)",
+        async () => new RedisRaceSchedule(await fresh()),
     );
 
     describe("real Redis atomicity", () => {
