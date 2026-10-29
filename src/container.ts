@@ -1,11 +1,16 @@
 // COMPOSITION ROOT: the only file that picks concrete classes.
 // Swapping in-memory -> Redis (Phase 4) or adding Kafka (Phase 7) happens here.
 import { InMemoryChatRepository } from "./adapters/memory/InMemoryChatRepository";
+import { InProcessEventPublisher } from "./adapters/events/InProcessEventPublisher";
 import { InMemoryGameRepository } from "./adapters/memory/InMemoryGameRepository";
+import { InMemoryLeaderboard } from "./adapters/memory/InMemoryLeaderboard";
+import { InMemoryMatchHistory } from "./adapters/memory/InMemoryMatchHistory";
 import { InMemoryRateLimiter } from "./adapters/memory/InMemoryRateLimiter";
 import { InMemorySessionStore } from "./adapters/memory/InMemorySessionStore";
 import { RedisChatRepository } from "./adapters/redis/RedisChatRepository";
 import { RedisGameRepository } from "./adapters/redis/RedisGameRepository";
+import { RedisLeaderboard } from "./adapters/redis/RedisLeaderboard";
+import { RedisMatchHistory } from "./adapters/redis/RedisMatchHistory";
 import { RedisQuotePool } from "./adapters/redis/RedisQuotePool";
 import { RedisRateLimiter } from "./adapters/redis/RedisRateLimiter";
 import { RedisSessionStore } from "./adapters/redis/RedisSessionStore";
@@ -23,7 +28,9 @@ import { createDefaultModeRegistry } from "./domain/modes/modeRegistry";
 import type { ChatRepository } from "./ports/ChatRepository";
 import type { Clock } from "./ports/Clock";
 import type { GameRepository } from "./ports/GameRepository";
+import type { Leaderboard } from "./ports/Leaderboard";
 import type { Logger } from "./ports/Logger";
+import type { MatchHistory } from "./ports/MatchHistory";
 import type { QuoteProvider } from "./ports/QuoteProvider";
 import type { RateLimiter } from "./ports/RateLimiter";
 import type { SessionStore } from "./ports/SessionStore";
@@ -32,6 +39,7 @@ import { GameService } from "./services/GameService";
 import { PresenceService } from "./services/PresenceService";
 import { QuoteService } from "./services/QuoteService";
 import { RaceClock } from "./services/RaceClock";
+import { StatsService } from "./services/StatsService";
 import type { SocketHandlerDeps } from "./transport/socket/registerSocketHandlers";
 import type { IoServer } from "./transport/socket/types";
 
@@ -43,6 +51,8 @@ export interface Stores {
     chat: ChatRepository;
     sessions: SessionStore;
     limiter: RateLimiter;
+    leaderboard: Leaderboard;
+    history: MatchHistory;
 }
 
 /**
@@ -57,6 +67,8 @@ export function createStores(store: Store, clock: Clock, redis?: Redis): Stores 
             chat: new RedisChatRepository(redis),
             sessions: new RedisSessionStore(redis),
             limiter: new RedisRateLimiter(redis),
+            leaderboard: new RedisLeaderboard(redis),
+            history: new RedisMatchHistory(redis),
         };
     }
     return {
@@ -64,6 +76,8 @@ export function createStores(store: Store, clock: Clock, redis?: Redis): Stores 
         chat: new InMemoryChatRepository(),
         sessions: new InMemorySessionStore(),
         limiter: new InMemoryRateLimiter(clock),
+        leaderboard: new InMemoryLeaderboard(),
+        history: new InMemoryMatchHistory(),
     };
 }
 
@@ -80,7 +94,14 @@ export function buildContainer(
     const ids = new RandomIdGenerator();
     const notifier = new SocketIoNotifier(io);
 
-    const { games, chat, sessions, limiter } = createStores(config.store, clock, redis);
+    const { games, chat, sessions, limiter, leaderboard, history } = createStores(
+        config.store,
+        clock,
+        redis,
+    );
+    const statsService = new StatsService({ leaderboard, history });
+    const events = new InProcessEventPublisher(logger);
+    events.subscribe((event) => statsService.onEvent(event));
 
     // Quote sources, tried in order: Redis pool (pre-fetched) -> API Ninjas
     // live -> bundled quotes. The pool and API are only used with an API key.
@@ -109,7 +130,7 @@ export function buildContainer(
             logger.warn("quote source failed, trying the next one", { index, err: String(err) }),
         ),
     );
-    const raceClock = new RaceClock({ games, notifier, clock, scheduler });
+    const raceClock = new RaceClock({ games, notifier, clock, scheduler, events });
     const gameService = new GameService({
         games,
         chat,
@@ -124,5 +145,13 @@ export function buildContainer(
     const chatService = new ChatService({ chat, notifier, limiter, clock, ids });
     const presence = new PresenceService(scheduler);
 
-    return { gameService, chatService, presence, sessions, connections: notifier, logger };
+    return {
+        gameService,
+        chatService,
+        presence,
+        statsService,
+        sessions,
+        connections: notifier,
+        logger,
+    };
 }

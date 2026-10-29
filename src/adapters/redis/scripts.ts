@@ -1,4 +1,4 @@
-// Lua scripts for RedisGameRepository. Redis runs a script as ONE step:
+// Lua scripts for the Redis adapters. Redis runs a script as ONE step:
 // no other command can run in the middle, so "check, then write" is atomic.
 // That's what stops two players taking the last seat at the same time.
 //
@@ -66,10 +66,25 @@ redis.call('EXPIRE', KEYS[3], ARGV[1])
 return 1
 `;
 
+/**
+ * KEYS: sorted set   ARGV: score, member
+ * Stores the score only if it beats the current one. (Real Redis has ZADD GT
+ * for this; ioredis-mock doesn't, so a script keeps tests and prod identical.)
+ */
+const KEEP_BEST = `
+local current = redis.call('ZSCORE', KEYS[1], ARGV[2])
+if (not current) or tonumber(ARGV[1]) > tonumber(current) then
+    redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
+    return 1
+end
+return 0
+`;
+
 const SCRIPTS = {
     trAddPlayer: { numberOfKeys: 3, lua: ADD_PLAYER },
     trUpdateGame: { numberOfKeys: 2, lua: UPDATE_GAME },
     trUpdatePlayer: { numberOfKeys: 3, lua: UPDATE_PLAYER },
+    trKeepBest: { numberOfKeys: 1, lua: KEEP_BEST },
 } as const;
 
 export type ScriptName = keyof typeof SCRIPTS;

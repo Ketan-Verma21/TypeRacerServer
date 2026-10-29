@@ -1,8 +1,12 @@
 // Builds the real services wired to in-memory adapters and fakes.
 // Every service test starts from here.
+import { InProcessEventPublisher } from "../../src/adapters/events/InProcessEventPublisher";
 import { InMemoryChatRepository } from "../../src/adapters/memory/InMemoryChatRepository";
 import { InMemoryGameRepository } from "../../src/adapters/memory/InMemoryGameRepository";
+import { InMemoryLeaderboard } from "../../src/adapters/memory/InMemoryLeaderboard";
+import { InMemoryMatchHistory } from "../../src/adapters/memory/InMemoryMatchHistory";
 import { InMemoryRateLimiter } from "../../src/adapters/memory/InMemoryRateLimiter";
+import type { DomainEvent } from "../../src/domain/events";
 import { createDefaultModeRegistry } from "../../src/domain/modes/modeRegistry";
 import type { Session } from "../../src/domain/types";
 import type { IdGenerator } from "../../src/ports/IdGenerator";
@@ -11,6 +15,7 @@ import { GameService } from "../../src/services/GameService";
 import { PresenceService } from "../../src/services/PresenceService";
 import { QuoteService } from "../../src/services/QuoteService";
 import { RaceClock } from "../../src/services/RaceClock";
+import { StatsService } from "../../src/services/StatsService";
 import { FakeClock } from "./FakeClock";
 import { FakeNotifier } from "./FakeNotifier";
 import { FakeQuoteProvider } from "./FakeQuoteProvider";
@@ -27,7 +32,17 @@ export function createTestApp<I extends IdGenerator = SequentialIdGenerator>(
     const games = new InMemoryGameRepository();
     const chat = new InMemoryChatRepository();
     const ids = (options.ids ?? new SequentialIdGenerator()) as I;
-    const raceClock = new RaceClock({ games, notifier, clock, scheduler });
+    const leaderboard = new InMemoryLeaderboard();
+    const history = new InMemoryMatchHistory();
+    const statsService = new StatsService({ leaderboard, history });
+    const logger = { info: () => {}, warn: () => {}, error: () => {} };
+    const events = new InProcessEventPublisher(logger);
+    const published: DomainEvent[] = []; // every event, for tests to check
+    events.subscribe((event) => {
+        published.push(event);
+    });
+    events.subscribe((event) => statsService.onEvent(event));
+    const raceClock = new RaceClock({ games, notifier, clock, scheduler, events });
     const quotes = new QuoteService(quoteProvider);
     const gameService = new GameService({
         games,
@@ -92,6 +107,10 @@ export function createTestApp<I extends IdGenerator = SequentialIdGenerator>(
         gameService,
         chatService,
         presence,
+        statsService,
+        leaderboard,
+        history,
+        published,
         sessionOf,
         lobbyWith,
         startRace,
