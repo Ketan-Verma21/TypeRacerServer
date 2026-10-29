@@ -1,12 +1,12 @@
 // Entry point: HTTP server + Socket.IO, wired by the container.
 import "dotenv/config";
 import http from "node:http";
-import socketIo from "socket.io";
 import { createHttpApp } from "./app";
 import { loadConfig } from "./config/env";
 import { buildContainer } from "./container";
 import { PinoLogger } from "./infra/PinoLogger";
 import { createRedisClient, isRedisReady } from "./infra/redis";
+import { createSocketServer } from "./transport/socket/createSocketServer";
 import { registerSocketHandlers } from "./transport/socket/registerSocketHandlers";
 import type { IoServer } from "./transport/socket/types";
 
@@ -21,7 +21,7 @@ const redis = config.store === "redis" ? createRedisClient(config.redisUrl, logg
 const isReady = redis ? () => isRedisReady(redis) : undefined;
 
 const server = http.createServer(createHttpApp({ isReady }));
-const socketServer = socketIo(server);
+const socketServer = createSocketServer(server);
 const io = socketServer as unknown as IoServer;
 registerSocketHandlers(io, buildContainer(config, io, logger, redis));
 
