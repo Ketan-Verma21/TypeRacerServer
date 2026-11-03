@@ -14,19 +14,12 @@ import { Schemas } from "./schemas";
 import type { IoServer, ServerSocket } from "./types";
 import { createOn } from "./withHandler";
 
-/** Lets the room adapter know which sockets exist (for joining rooms by socket id). */
-export interface ConnectionTracker {
-    track(socket: ServerSocket): void;
-    untrack(socketId: string): void;
-}
-
 export interface SocketHandlerDeps {
     gameService: GameService;
     chatService: ChatService;
     presence: PresenceService;
     statsService: StatsService;
     sessions: SessionStore;
-    connections: ConnectionTracker;
     logger: Logger;
 }
 
@@ -37,10 +30,8 @@ export function registerSocketHandlers(io: IoServer, deps: SocketHandlerDeps): v
 }
 
 export function handleConnection(socket: ServerSocket, deps: SocketHandlerDeps): void {
-    const { gameService, chatService, presence, statsService, sessions, connections, logger } =
-        deps;
+    const { gameService, chatService, presence, statsService, sessions, logger } = deps;
     const on = createOn(socket, logger);
-    connections.track(socket);
 
     /** This socket's session, only if it belongs to `gameId`. */
     const sessionFor = async (gameId: string): Promise<Session | null> => {
@@ -125,7 +116,7 @@ export function handleConnection(socket: ServerSocket, deps: SocketHandlerDeps):
         const s = await sessionFor(d.gameId);
         if (!s) return; // already left / not ours
         await sessions.delete(socket.id);
-        presence.reconnected(s.playerId); // cancel any pending removal
+        await presence.reconnected(s.gameId, s.playerId); // cancel any pending removal
         await gameService.leaveGame(s.gameId, s.playerId);
     });
 
@@ -139,7 +130,7 @@ export function handleConnection(socket: ServerSocket, deps: SocketHandlerDeps):
                 d.playerId,
                 socket.id,
             );
-            presence.reconnected(d.playerId);
+            await presence.reconnected(result.game.id, d.playerId);
             await joined(result);
         },
         { showOnScreen: true },
@@ -153,12 +144,11 @@ export function handleConnection(socket: ServerSocket, deps: SocketHandlerDeps):
 
     // Connection dropped: give the player a grace period to come back.
     socket.on("disconnect", () => {
-        connections.untrack(socket.id);
         void (async () => {
             const s = await sessions.get(socket.id);
             if (!s) return;
             await sessions.delete(socket.id);
-            presence.disconnected(s.playerId, () => gameService.leaveGame(s.gameId, s.playerId));
+            await presence.disconnected(s.gameId, s.playerId);
         })().catch((err: unknown) => logger.error("disconnect failed", { err: String(err) }));
     });
 }

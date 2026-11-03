@@ -54,7 +54,6 @@ function connect(id: string): FakeSocket {
         presence: app.presence,
         statsService: app.statsService,
         sessions,
-        connections: { track: () => {}, untrack: () => {} },
         logger,
     });
     return socket;
@@ -168,7 +167,7 @@ describe("timer (start race)", () => {
 
         await host.send("timer", { gameId, playerId: "ignored" });
 
-        expect(app.raceClock.isRunning(gameId)).toBe(true);
+        expect(await app.raceClock.isRunning(gameId)).toBe(true);
     });
 
     it("ignores a guest who sends the host's playerId (regression)", async () => {
@@ -177,7 +176,7 @@ describe("timer (start race)", () => {
 
         await guest.send("timer", { gameId, playerId: hostId });
 
-        expect(app.raceClock.isRunning(gameId)).toBe(false);
+        expect(await app.raceClock.isRunning(gameId)).toBe(false);
     });
 
     it("ignores a start request for another game", async () => {
@@ -185,7 +184,7 @@ describe("timer (start race)", () => {
 
         await host.send("timer", { gameId: "ZZZZZZ" });
 
-        expect(app.raceClock.isRunning(gameId)).toBe(false);
+        expect(await app.raceClock.isRunning(gameId)).toBe(false);
     });
 });
 

@@ -147,7 +147,7 @@ export class GameService {
         this.requireHost(game, session);
         if (game.phase !== "over") throw new InvalidStateError("The race isn't over yet");
 
-        raceClock.stop(game.id);
+        await raceClock.stop(game.id);
         const words = await quotes.getWords(QUOTE_LENGTHS[game.settings.length]);
         let freeSlots = game.settings.maxPlayers - racersOf(game).length;
         for (const p of game.players) {
@@ -185,7 +185,7 @@ export class GameService {
         let updated = await this.requireGame(gameId);
 
         if (updated.players.length === 0) {
-            raceClock.stop(gameId);
+            await raceClock.stop(gameId);
             await chat.clear(gameId);
             await games.delete(gameId);
             return;

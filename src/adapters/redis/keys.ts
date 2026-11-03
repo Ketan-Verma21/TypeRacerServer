@@ -22,4 +22,7 @@ export const keys = {
     quotePool: (): string => "quotes:pool",
     leaderboard: (mode: ModeId): string => `leaderboard:${mode}`,
     recentMatches: (): string => "matches:recent",
+    raceClock: (): string => "games:clock",
+    tick: (id: GameId, label: string): string => `tick:${id}:${label}`,
+    presenceGrace: (): string => "presence:grace",
 } as const;

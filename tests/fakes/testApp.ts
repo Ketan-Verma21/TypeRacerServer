@@ -2,9 +2,11 @@
 // Every service test starts from here.
 import { InProcessEventPublisher } from "../../src/adapters/events/InProcessEventPublisher";
 import { InMemoryChatRepository } from "../../src/adapters/memory/InMemoryChatRepository";
+import { InMemoryGracePeriods } from "../../src/adapters/memory/InMemoryGracePeriods";
 import { InMemoryGameRepository } from "../../src/adapters/memory/InMemoryGameRepository";
 import { InMemoryLeaderboard } from "../../src/adapters/memory/InMemoryLeaderboard";
 import { InMemoryMatchHistory } from "../../src/adapters/memory/InMemoryMatchHistory";
+import { InMemoryRaceSchedule } from "../../src/adapters/memory/InMemoryRaceSchedule";
 import { InMemoryRateLimiter } from "../../src/adapters/memory/InMemoryRateLimiter";
 import type { DomainEvent } from "../../src/domain/events";
 import { createDefaultModeRegistry } from "../../src/domain/modes/modeRegistry";
@@ -16,6 +18,7 @@ import { PresenceService } from "../../src/services/PresenceService";
 import { QuoteService } from "../../src/services/QuoteService";
 import { RaceClock } from "../../src/services/RaceClock";
 import { StatsService } from "../../src/services/StatsService";
+import { Sweeper } from "../../src/services/Sweeper";
 import { FakeClock } from "./FakeClock";
 import { FakeNotifier } from "./FakeNotifier";
 import { FakeQuoteProvider } from "./FakeQuoteProvider";
@@ -42,7 +45,18 @@ export function createTestApp<I extends IdGenerator = SequentialIdGenerator>(
         published.push(event);
     });
     events.subscribe((event) => statsService.onEvent(event));
-    const raceClock = new RaceClock({ games, notifier, clock, scheduler, events });
+    const schedule = new InMemoryRaceSchedule(clock);
+    const raceClock = new RaceClock({
+        games,
+        notifier,
+        clock,
+        schedule,
+        events,
+        onError: (err) => {
+            throw err; // tests should see clock errors
+        },
+    });
+
     const quotes = new QuoteService(quoteProvider);
     const gameService = new GameService({
         games,
@@ -62,7 +76,29 @@ export function createTestApp<I extends IdGenerator = SequentialIdGenerator>(
         clock,
         ids,
     });
-    const presence = new PresenceService(scheduler, 15_000);
+    const grace = new InMemoryGracePeriods();
+    const presence = new PresenceService(
+        {
+            grace,
+            clock,
+            onExpire: (gameId, playerId) => gameService.leaveGame(gameId, playerId),
+            onError: (err) => {
+                throw err;
+            },
+        },
+        15_000,
+    );
+    // the clocks only move when a test calls scheduler.tick()
+    new Sweeper(
+        {
+            clock,
+            scheduler,
+            onError: (err) => {
+                throw err; // tests should see sweep errors
+            },
+        },
+        [(now) => raceClock.sweep(now), (now) => presence.sweep(now)],
+    ).start();
 
     /** Session for a player returned by createGame/joinGame. */
     const sessionOf = (r: {
@@ -103,10 +139,12 @@ export function createTestApp<I extends IdGenerator = SequentialIdGenerator>(
         games,
         chat,
         raceClock,
+        schedule,
         ids,
         gameService,
         chatService,
         presence,
+        grace,
         statsService,
         leaderboard,
         history,

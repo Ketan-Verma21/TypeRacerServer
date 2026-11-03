@@ -80,11 +80,26 @@ end
 return 0
 `;
 
+/**
+ * KEYS: sorted set   ARGV: member, expected score
+ * Removes the member only if its score is still the expected one. Returns 1 to
+ * exactly one caller: the race clock's "I handle this deadline" claim.
+ */
+const CLAIM_DUE = `
+local score = redis.call('ZSCORE', KEYS[1], ARGV[1])
+if score and tonumber(score) == tonumber(ARGV[2]) then
+    redis.call('ZREM', KEYS[1], ARGV[1])
+    return 1
+end
+return 0
+`;
+
 const SCRIPTS = {
     trAddPlayer: { numberOfKeys: 3, lua: ADD_PLAYER },
     trUpdateGame: { numberOfKeys: 2, lua: UPDATE_GAME },
     trUpdatePlayer: { numberOfKeys: 3, lua: UPDATE_PLAYER },
     trKeepBest: { numberOfKeys: 1, lua: KEEP_BEST },
+    trClaimDue: { numberOfKeys: 1, lua: CLAIM_DUE },
 } as const;
 
 export type ScriptName = keyof typeof SCRIPTS;

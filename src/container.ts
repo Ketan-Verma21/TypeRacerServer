@@ -3,15 +3,19 @@
 import { InMemoryChatRepository } from "./adapters/memory/InMemoryChatRepository";
 import { InProcessEventPublisher } from "./adapters/events/InProcessEventPublisher";
 import { InMemoryGameRepository } from "./adapters/memory/InMemoryGameRepository";
+import { InMemoryGracePeriods } from "./adapters/memory/InMemoryGracePeriods";
 import { InMemoryLeaderboard } from "./adapters/memory/InMemoryLeaderboard";
 import { InMemoryMatchHistory } from "./adapters/memory/InMemoryMatchHistory";
+import { InMemoryRaceSchedule } from "./adapters/memory/InMemoryRaceSchedule";
 import { InMemoryRateLimiter } from "./adapters/memory/InMemoryRateLimiter";
 import { InMemorySessionStore } from "./adapters/memory/InMemorySessionStore";
 import { RedisChatRepository } from "./adapters/redis/RedisChatRepository";
 import { RedisGameRepository } from "./adapters/redis/RedisGameRepository";
+import { RedisGracePeriods } from "./adapters/redis/RedisGracePeriods";
 import { RedisLeaderboard } from "./adapters/redis/RedisLeaderboard";
 import { RedisMatchHistory } from "./adapters/redis/RedisMatchHistory";
 import { RedisQuotePool } from "./adapters/redis/RedisQuotePool";
+import { RedisRaceSchedule } from "./adapters/redis/RedisRaceSchedule";
 import { RedisRateLimiter } from "./adapters/redis/RedisRateLimiter";
 import { RedisSessionStore } from "./adapters/redis/RedisSessionStore";
 import { IntervalScheduler } from "./adapters/IntervalScheduler";
@@ -28,10 +32,12 @@ import { createDefaultModeRegistry } from "./domain/modes/modeRegistry";
 import type { ChatRepository } from "./ports/ChatRepository";
 import type { Clock } from "./ports/Clock";
 import type { GameRepository } from "./ports/GameRepository";
+import type { GracePeriods } from "./ports/GracePeriods";
 import type { Leaderboard } from "./ports/Leaderboard";
 import type { Logger } from "./ports/Logger";
 import type { MatchHistory } from "./ports/MatchHistory";
 import type { QuoteProvider } from "./ports/QuoteProvider";
+import type { RaceSchedule } from "./ports/RaceSchedule";
 import type { RateLimiter } from "./ports/RateLimiter";
 import type { SessionStore } from "./ports/SessionStore";
 import { ChatService } from "./services/ChatService";
@@ -40,6 +46,7 @@ import { PresenceService } from "./services/PresenceService";
 import { QuoteService } from "./services/QuoteService";
 import { RaceClock } from "./services/RaceClock";
 import { StatsService } from "./services/StatsService";
+import { Sweeper } from "./services/Sweeper";
 import type { SocketHandlerDeps } from "./transport/socket/registerSocketHandlers";
 import type { IoServer } from "./transport/socket/types";
 
@@ -53,6 +60,13 @@ export interface Stores {
     limiter: RateLimiter;
     leaderboard: Leaderboard;
     history: MatchHistory;
+    raceSchedule: RaceSchedule;
+    grace: GracePeriods;
+}
+
+/** The socket handlers' dependencies, plus a way to stop the background timers. */
+export interface Container extends SocketHandlerDeps {
+    stop(): void;
 }
 
 /**
@@ -69,6 +83,8 @@ export function createStores(store: Store, clock: Clock, redis?: Redis): Stores 
             limiter: new RedisRateLimiter(redis),
             leaderboard: new RedisLeaderboard(redis),
             history: new RedisMatchHistory(redis),
+            raceSchedule: new RedisRaceSchedule(redis),
+            grace: new RedisGracePeriods(redis),
         };
     }
     return {
@@ -78,6 +94,8 @@ export function createStores(store: Store, clock: Clock, redis?: Redis): Stores 
         limiter: new InMemoryRateLimiter(clock),
         leaderboard: new InMemoryLeaderboard(),
         history: new InMemoryMatchHistory(),
+        raceSchedule: new InMemoryRaceSchedule(clock),
+        grace: new InMemoryGracePeriods(),
     };
 }
 
@@ -86,7 +104,7 @@ export function buildContainer(
     io: IoServer,
     logger: Logger,
     redis?: Redis,
-): SocketHandlerDeps {
+): Container {
     const clock = new SystemClock();
     const scheduler = new IntervalScheduler((err) =>
         logger.error("timer failed", { err: String(err) }),
@@ -94,11 +112,9 @@ export function buildContainer(
     const ids = new RandomIdGenerator();
     const notifier = new SocketIoNotifier(io);
 
-    const { games, chat, sessions, limiter, leaderboard, history } = createStores(
-        config.store,
-        clock,
-        redis,
-    );
+    const timers: (() => void)[] = []; // stop functions of everything we start
+    const { games, chat, sessions, limiter, leaderboard, history, raceSchedule, grace } =
+        createStores(config.store, clock, redis);
     const statsService = new StatsService({ leaderboard, history });
     const events = new InProcessEventPublisher(logger);
     events.subscribe((event) => statsService.onEvent(event));
@@ -120,8 +136,8 @@ export function buildContainer(
         const refill = async (): Promise<void> => {
             await pool.refill();
         };
-        scheduler.after(0, refill); // fill it at startup
-        scheduler.every(QUOTE_POOL_REFILL_MS, refill);
+        timers.push(scheduler.after(0, refill)); // fill it at startup
+        timers.push(scheduler.every(QUOTE_POOL_REFILL_MS, refill));
     }
     if (apiQuotes) quoteSources.push(apiQuotes);
     quoteSources.push(localQuotes);
@@ -130,7 +146,15 @@ export function buildContainer(
             logger.warn("quote source failed, trying the next one", { index, err: String(err) }),
         ),
     );
-    const raceClock = new RaceClock({ games, notifier, clock, scheduler, events });
+    const raceClock = new RaceClock({
+        games,
+        notifier,
+        clock,
+        schedule: raceSchedule,
+        events,
+        onError: (err, gameId) => logger.error("race clock failed", { gameId, err: String(err) }),
+    });
+
     const gameService = new GameService({
         games,
         chat,
@@ -143,7 +167,18 @@ export function buildContainer(
         rooms: notifier,
     });
     const chatService = new ChatService({ chat, notifier, limiter, clock, ids });
-    const presence = new PresenceService(scheduler);
+    const presence = new PresenceService({
+        grace,
+        clock,
+        onExpire: (gameId, playerId) => gameService.leaveGame(gameId, playerId),
+        onError: (err) => logger.error("presence expiry failed", { err: String(err) }),
+    });
+    // Every instance sweeps once a second; claims keep each tick / removal to one instance.
+    const sweeper = new Sweeper(
+        { clock, scheduler, onError: (err) => logger.error("sweep failed", { err: String(err) }) },
+        [(now) => raceClock.sweep(now), (now) => presence.sweep(now)],
+    );
+    timers.push(sweeper.start());
 
     return {
         gameService,
@@ -151,7 +186,9 @@ export function buildContainer(
         presence,
         statsService,
         sessions,
-        connections: notifier,
         logger,
+        stop: () => {
+            for (const stop of timers) stop();
+        },
     };
 }
