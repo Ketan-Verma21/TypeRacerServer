@@ -6,6 +6,10 @@ The server is **authoritative**. Players only send the words they type; the serv
 
 > The Flutter app lives in [Ketan-Verma21/Type_Racer](https://github.com/Ketan-Verma21/Type_Racer).
 
+## 🎬 Demo
+
+[![Watch the demo](https://img.youtube.com/vi/h-L4iLzStZU/hqdefault.jpg)](https://youtu.be/h-L4iLzStZU)
+
 ---
 
 ## ✨ What it does
@@ -211,7 +215,7 @@ Measured on a laptop with Redis in Docker — store time for one action:
 | --- | ------------------------------------------------------------------------------------------ |
 | ✅  | TypeScript rewrite with SOLID, validation, structured logs, 6-char room codes              |
 | ✅  | Docker Compose; Redis as the datastore; leaderboard and match history                      |
-| 🟨  | **Several servers at once**: Socket.IO 4, Redis adapter, a race clock shared through Redis |
+| ✅  | **Several servers at once**: Socket.IO 4, Redis adapter, a race clock shared through Redis |
 | ⬜  | Nginx load balancer + load testing                                                         |
 | ⬜  | Kafka for post-race events (stats, anti-cheat)                                             |
 | ⬜  | CI with GitHub Actions                                                                     |
