@@ -116,7 +116,7 @@ export function handleConnection(socket: ServerSocket, deps: SocketHandlerDeps):
         const s = await sessionFor(d.gameId);
         if (!s) return; // already left / not ours
         await sessions.delete(socket.id);
-        presence.reconnected(s.playerId); // cancel any pending removal
+        await presence.reconnected(s.gameId, s.playerId); // cancel any pending removal
         await gameService.leaveGame(s.gameId, s.playerId);
     });
 
@@ -130,7 +130,7 @@ export function handleConnection(socket: ServerSocket, deps: SocketHandlerDeps):
                 d.playerId,
                 socket.id,
             );
-            presence.reconnected(d.playerId);
+            await presence.reconnected(result.game.id, d.playerId);
             await joined(result);
         },
         { showOnScreen: true },
@@ -148,7 +148,7 @@ export function handleConnection(socket: ServerSocket, deps: SocketHandlerDeps):
             const s = await sessions.get(socket.id);
             if (!s) return;
             await sessions.delete(socket.id);
-            presence.disconnected(s.playerId, () => gameService.leaveGame(s.gameId, s.playerId));
+            await presence.disconnected(s.gameId, s.playerId);
         })().catch((err: unknown) => logger.error("disconnect failed", { err: String(err) }));
     });
 }

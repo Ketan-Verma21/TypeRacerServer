@@ -128,7 +128,7 @@ tests/
 
 With several servers, the **Socket.IO Redis adapter** passes messages between them over Redis pub/sub: when one server sends a room update, players connected to any server receive it.
 
-The **race clock lives in Redis too**: a running game is one entry in the `games:clock` sorted set (game → its next deadline). Every server checks it once a second, on the second, and claims work with single Redis commands — `SET NX` for "who sends this second's tick", a small Lua script for "who starts / ends this race". So each tick is sent once, each race starts and ends once, and **a race keeps going even if the server that started it crashes**.
+The **race clock lives in Redis too**: a running game is one entry in the `games:clock` sorted set (game → its next deadline). Every server checks it once a second, on the second, and claims work with single Redis commands — `SET NX` for "who sends this second's tick", a small Lua script for "who starts / ends this race". So each tick is sent once, each race starts and ends once, and **a race keeps going even if the server that started it crashes**. The 15-second reconnect window works the same way (`presence:grace`), so a player can drop off one server and come back on another.
 
 Every room key expires **2 hours** after the room's last activity. Changes that must not be interrupted run as **Lua scripts**, which Redis runs as one step — for example "count the racers and add a player only if there's a seat", so two people can never both take the last seat.
 

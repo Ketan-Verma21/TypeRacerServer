@@ -3,6 +3,7 @@
 import { InMemoryChatRepository } from "./adapters/memory/InMemoryChatRepository";
 import { InProcessEventPublisher } from "./adapters/events/InProcessEventPublisher";
 import { InMemoryGameRepository } from "./adapters/memory/InMemoryGameRepository";
+import { InMemoryGracePeriods } from "./adapters/memory/InMemoryGracePeriods";
 import { InMemoryLeaderboard } from "./adapters/memory/InMemoryLeaderboard";
 import { InMemoryMatchHistory } from "./adapters/memory/InMemoryMatchHistory";
 import { InMemoryRaceSchedule } from "./adapters/memory/InMemoryRaceSchedule";
@@ -10,6 +11,7 @@ import { InMemoryRateLimiter } from "./adapters/memory/InMemoryRateLimiter";
 import { InMemorySessionStore } from "./adapters/memory/InMemorySessionStore";
 import { RedisChatRepository } from "./adapters/redis/RedisChatRepository";
 import { RedisGameRepository } from "./adapters/redis/RedisGameRepository";
+import { RedisGracePeriods } from "./adapters/redis/RedisGracePeriods";
 import { RedisLeaderboard } from "./adapters/redis/RedisLeaderboard";
 import { RedisMatchHistory } from "./adapters/redis/RedisMatchHistory";
 import { RedisQuotePool } from "./adapters/redis/RedisQuotePool";
@@ -30,6 +32,7 @@ import { createDefaultModeRegistry } from "./domain/modes/modeRegistry";
 import type { ChatRepository } from "./ports/ChatRepository";
 import type { Clock } from "./ports/Clock";
 import type { GameRepository } from "./ports/GameRepository";
+import type { GracePeriods } from "./ports/GracePeriods";
 import type { Leaderboard } from "./ports/Leaderboard";
 import type { Logger } from "./ports/Logger";
 import type { MatchHistory } from "./ports/MatchHistory";
@@ -58,6 +61,7 @@ export interface Stores {
     leaderboard: Leaderboard;
     history: MatchHistory;
     raceSchedule: RaceSchedule;
+    grace: GracePeriods;
 }
 
 /** The socket handlers' dependencies, plus a way to stop the background timers. */
@@ -80,6 +84,7 @@ export function createStores(store: Store, clock: Clock, redis?: Redis): Stores 
             leaderboard: new RedisLeaderboard(redis),
             history: new RedisMatchHistory(redis),
             raceSchedule: new RedisRaceSchedule(redis),
+            grace: new RedisGracePeriods(redis),
         };
     }
     return {
@@ -90,6 +95,7 @@ export function createStores(store: Store, clock: Clock, redis?: Redis): Stores 
         leaderboard: new InMemoryLeaderboard(),
         history: new InMemoryMatchHistory(),
         raceSchedule: new InMemoryRaceSchedule(clock),
+        grace: new InMemoryGracePeriods(),
     };
 }
 
@@ -107,11 +113,8 @@ export function buildContainer(
     const notifier = new SocketIoNotifier(io);
 
     const timers: (() => void)[] = []; // stop functions of everything we start
-    const { games, chat, sessions, limiter, leaderboard, history, raceSchedule } = createStores(
-        config.store,
-        clock,
-        redis,
-    );
+    const { games, chat, sessions, limiter, leaderboard, history, raceSchedule, grace } =
+        createStores(config.store, clock, redis);
     const statsService = new StatsService({ leaderboard, history });
     const events = new InProcessEventPublisher(logger);
     events.subscribe((event) => statsService.onEvent(event));
@@ -151,12 +154,7 @@ export function buildContainer(
         events,
         onError: (err, gameId) => logger.error("race clock failed", { gameId, err: String(err) }),
     });
-    // Every instance sweeps once a second; claims in the schedule keep it to one tick each.
-    const sweeper = new Sweeper(
-        { clock, scheduler, onError: (err) => logger.error("sweep failed", { err: String(err) }) },
-        [(now) => raceClock.sweep(now)],
-    );
-    timers.push(sweeper.start());
+
     const gameService = new GameService({
         games,
         chat,
@@ -169,7 +167,18 @@ export function buildContainer(
         rooms: notifier,
     });
     const chatService = new ChatService({ chat, notifier, limiter, clock, ids });
-    const presence = new PresenceService(scheduler);
+    const presence = new PresenceService({
+        grace,
+        clock,
+        onExpire: (gameId, playerId) => gameService.leaveGame(gameId, playerId),
+        onError: (err) => logger.error("presence expiry failed", { err: String(err) }),
+    });
+    // Every instance sweeps once a second; claims keep each tick / removal to one instance.
+    const sweeper = new Sweeper(
+        { clock, scheduler, onError: (err) => logger.error("sweep failed", { err: String(err) }) },
+        [(now) => raceClock.sweep(now), (now) => presence.sweep(now)],
+    );
+    timers.push(sweeper.start());
 
     return {
         gameService,

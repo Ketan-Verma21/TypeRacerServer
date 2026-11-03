@@ -2,6 +2,7 @@
 // Every service test starts from here.
 import { InProcessEventPublisher } from "../../src/adapters/events/InProcessEventPublisher";
 import { InMemoryChatRepository } from "../../src/adapters/memory/InMemoryChatRepository";
+import { InMemoryGracePeriods } from "../../src/adapters/memory/InMemoryGracePeriods";
 import { InMemoryGameRepository } from "../../src/adapters/memory/InMemoryGameRepository";
 import { InMemoryLeaderboard } from "../../src/adapters/memory/InMemoryLeaderboard";
 import { InMemoryMatchHistory } from "../../src/adapters/memory/InMemoryMatchHistory";
@@ -55,17 +56,7 @@ export function createTestApp<I extends IdGenerator = SequentialIdGenerator>(
             throw err; // tests should see clock errors
         },
     });
-    // the clock only moves when a test calls scheduler.tick()
-    new Sweeper(
-        {
-            clock,
-            scheduler,
-            onError: (err) => {
-                throw err;
-            },
-        },
-        [(now) => raceClock.sweep(now)],
-    ).start();
+
     const quotes = new QuoteService(quoteProvider);
     const gameService = new GameService({
         games,
@@ -85,7 +76,29 @@ export function createTestApp<I extends IdGenerator = SequentialIdGenerator>(
         clock,
         ids,
     });
-    const presence = new PresenceService(scheduler, 15_000);
+    const grace = new InMemoryGracePeriods();
+    const presence = new PresenceService(
+        {
+            grace,
+            clock,
+            onExpire: (gameId, playerId) => gameService.leaveGame(gameId, playerId),
+            onError: (err) => {
+                throw err;
+            },
+        },
+        15_000,
+    );
+    // the clocks only move when a test calls scheduler.tick()
+    new Sweeper(
+        {
+            clock,
+            scheduler,
+            onError: (err) => {
+                throw err; // tests should see sweep errors
+            },
+        },
+        [(now) => raceClock.sweep(now), (now) => presence.sweep(now)],
+    ).start();
 
     /** Session for a player returned by createGame/joinGame. */
     const sessionOf = (r: {
@@ -131,6 +144,7 @@ export function createTestApp<I extends IdGenerator = SequentialIdGenerator>(
         gameService,
         chatService,
         presence,
+        grace,
         statsService,
         leaderboard,
         history,

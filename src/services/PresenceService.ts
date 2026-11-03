@@ -1,35 +1,51 @@
 import { RECONNECT_GRACE_MS } from "../config/constants";
-import type { PlayerId } from "../domain/types";
-import type { Scheduler } from "../ports/Scheduler";
+import type { GameId, PlayerId } from "../domain/types";
+import type { Clock } from "../ports/Clock";
+import type { GracePeriods } from "../ports/GracePeriods";
+
+export interface PresenceServiceDeps {
+    grace: GracePeriods;
+    clock: Clock;
+    /** What happens when time is up (GameService.leaveGame). */
+    onExpire: (gameId: GameId, playerId: PlayerId) => Promise<void>;
+    /** One player failing must not stop the others. */
+    onError: (err: unknown) => void;
+}
 
 /**
  * A dropped player gets a grace period to come back before being removed.
- * In-process for now; Phase 5 moves this to Redis so it works across instances.
+ * The periods are stored (in Redis with STORE=redis) and expired by the
+ * Sweeper on any instance, so reconnecting to a different server works.
  */
 export class PresenceService {
-    private readonly pending = new Map<PlayerId, () => void>(); // playerId -> cancel()
-
     constructor(
-        private readonly scheduler: Scheduler,
+        private readonly deps: PresenceServiceDeps,
         private readonly graceMs = RECONNECT_GRACE_MS,
     ) {}
 
-    /** Runs `onExpire` unless the player reconnects within the grace period. */
-    disconnected(playerId: PlayerId, onExpire: () => void | Promise<void>): void {
-        this.reconnected(playerId);
-        const cancel = this.scheduler.after(this.graceMs, async () => {
-            this.pending.delete(playerId);
-            await onExpire();
-        });
-        this.pending.set(playerId, cancel);
+    async disconnected(gameId: GameId, playerId: PlayerId): Promise<void> {
+        const { grace, clock } = this.deps;
+        await grace.start(gameId, playerId, clock.now() + this.graceMs);
     }
 
-    reconnected(playerId: PlayerId): void {
-        this.pending.get(playerId)?.();
-        this.pending.delete(playerId);
+    async reconnected(gameId: GameId, playerId: PlayerId): Promise<void> {
+        await this.deps.grace.cancel(gameId, playerId);
     }
 
-    isPending(playerId: PlayerId): boolean {
-        return this.pending.has(playerId);
+    async isPending(gameId: GameId, playerId: PlayerId): Promise<boolean> {
+        return this.deps.grace.isPending(gameId, playerId);
+    }
+
+    /** Once a second (Sweeper): remove the players whose time is up — each by one instance only. */
+    async sweep(now: number): Promise<void> {
+        const { grace, onExpire, onError } = this.deps;
+        for (const { gameId, playerId, expiresAt } of await grace.expired(now)) {
+            try {
+                if (await grace.claim(gameId, playerId, expiresAt))
+                    await onExpire(gameId, playerId);
+            } catch (err) {
+                onError(err);
+            }
+        }
     }
 }

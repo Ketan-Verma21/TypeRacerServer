@@ -69,29 +69,26 @@ describe("ChatService", () => {
 
 describe("PresenceService", () => {
     it("removes a player who doesn't come back within the grace period", async () => {
-        let removed = false;
-        app.presence.disconnected("p1", () => {
-            removed = true;
-        });
+        const { gameId, guests } = await app.lobbyWith("Ana");
 
+        await app.presence.disconnected(gameId, guests[0]!.playerId);
         await app.scheduler.tick(14);
-        expect(removed).toBe(false);
+        expect((await app.games.get(gameId))!.players).toHaveLength(2);
         await app.scheduler.tick(1);
-        expect(removed).toBe(true);
+        expect((await app.games.get(gameId))!.players).toHaveLength(1);
     });
 
     it("keeps a player who reconnects in time", async () => {
-        let removed = false;
-        app.presence.disconnected("p1", () => {
-            removed = true;
-        });
+        const { gameId, guests } = await app.lobbyWith("Ana");
+        const ana = guests[0]!.playerId;
 
+        await app.presence.disconnected(gameId, ana);
         await app.scheduler.tick(5);
-        app.presence.reconnected("p1");
+        await app.presence.reconnected(gameId, ana);
         await app.scheduler.tick(20);
 
-        expect(removed).toBe(false);
-        expect(app.presence.isPending("p1")).toBe(false);
+        expect((await app.games.get(gameId))!.players).toHaveLength(2);
+        expect(await app.presence.isPending(gameId, ana)).toBe(false);
     });
 });
 
