@@ -1,38 +1,54 @@
-# Local backend: one app server + Redis.
-#   docker compose up --build      start (Ctrl+C to stop)
+# Local backend: TWO game servers + Redis (Phase 5: multi-instance).
+#   docker compose up --build -d   start everything
+#   docker compose stop app1       kill one server: games carry on through app2
 #   docker compose down            remove containers (Redis data stays in the volume)
-# Phase 5/6 grow this to app1..app3 behind nginx.
+# Phase 6 puts nginx in front, so players use one address.
+
+# Everything both game servers share. `<<: *app` copies it into each service.
+x-app: &app
+    build: .
+    image: type-racer-server
+    env_file: .env # copy .env.example to .env first
+    depends_on:
+        redis:
+            condition: service_healthy
+    healthcheck:
+        # The slim image has no curl, so ask Node to call /health/ready.
+        test:
+            [
+                "CMD",
+                "node",
+                "-e",
+                "fetch('http://localhost:3000/health/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+            ]
+        interval: 10s
+        timeout: 3s
+        retries: 3
+        start_period: 5s
+    restart: unless-stopped
+
 services:
-    app:
-        build: .
-        image: type-racer-server
-        env_file: .env # copy .env.example to .env first
+    app1:
+        <<: *app
         environment: # these win over the same names in .env
             INSTANCE_ID: app1
             STORE: redis
             REDIS_URL: redis://redis:6379 # "redis" = the service name below
         ports:
             - "3000:3000"
-        depends_on:
-            redis:
-                condition: service_healthy
-        healthcheck:
-            # The slim image has no curl, so ask Node to call /health/ready.
-            test:
-                [
-                    "CMD",
-                    "node",
-                    "-e",
-                    "fetch('http://localhost:3000/health/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
-                ]
-            interval: 10s
-            timeout: 3s
-            retries: 3
-            start_period: 5s
-        restart: unless-stopped
+
+    app2:
+        <<: *app
+        environment:
+            INSTANCE_ID: app2
+            STORE: redis
+            REDIS_URL: redis://redis:6379
+        ports:
+            - "3001:3000" # same server, reached on port 3001
 
     redis:
-        # The datastore (Phase 4). AOF on, so rooms survive a Redis restart too.
+        # Games, sessions, the race clock and the pub/sub between app1 and app2.
+        # AOF on, so data survives a Redis restart too.
         image: redis:7
         command: ["redis-server", "--appendonly", "yes"]
         ports:

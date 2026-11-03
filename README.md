@@ -35,16 +35,28 @@ The server is **authoritative**. Players only send the words they type; the serv
 
 ### With Docker (recommended)
 
-Starts the game server and Redis with one command:
+Starts **two game servers** (`app1` on port 3000, `app2` on port 3001) and Redis:
 
 ```bash
 cp .env.example .env              # first time only
 docker compose up --build -d
-docker compose ps                 # both services should say (healthy)
+docker compose ps                 # all three should say (healthy)
 curl localhost:3000/health        # {"ok":true,"db":true,...}
+docker compose logs -f app1 app2  # both servers' logs
 ```
 
 Stop it with `docker compose down` (Redis data is kept in a volume).
+
+#### Try the multi-server setup
+
+Run the app twice, each copy talking to a different server:
+
+```bash
+flutter run -d chrome --web-port 5001 --dart-define=SERVER_URL=http://localhost:3000   # player A -> app1
+flutter run -d chrome --web-port 5002 --dart-define=SERVER_URL=http://localhost:3001   # player B -> app2
+```
+
+Create a room in A, join it from B, and race: every word, tick and chat message crosses between the two servers through Redis. Then try `docker compose stop app1` in the middle of a race — the race still counts down and ends for player B, because the clock lives in Redis, not in app1.
 
 ### With Node (for development)
 
