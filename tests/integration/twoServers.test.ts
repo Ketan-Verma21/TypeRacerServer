@@ -115,6 +115,15 @@ describe.skipIf(!url)("two servers sharing Redis", () => {
         await Promise.all([a.close(), b.close()]);
     });
 
+    it("sends the creator their new room right away (regression: the adapter's async join)", async () => {
+        const host = await player(a);
+        const firstState = next<GameDto>(host, "updateGame", () => true, 2000);
+
+        host.emit("create-game", { nickname: "Host" });
+
+        expect((await firstState).players.map((p) => p.nickname)).toEqual(["Host"]);
+    });
+
     it("lets a player on server B join a room created on server A, and A's player sees it", async () => {
         const { game } = await hostOnAGuestOnB();
 

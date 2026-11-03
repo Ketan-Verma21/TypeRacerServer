@@ -8,18 +8,23 @@ import type { IoServer } from "../../transport/socket/types";
 /**
  * Turns service notifications into Socket.IO events. Every socket is in a
  * room named after its own id, so `io.to(socketId)` reaches one player.
- * With the Redis adapter, all of this works across server instances.
+ * With the Redis adapter, broadcasts reach players on every server instance.
  */
 export class SocketIoNotifier implements Notifier, RoomMembership {
     constructor(private readonly io: IoServer) {}
 
-    // `in(socketId)` = that one socket, wherever it is connected.
+    // A socket is always put in / taken out of a room by the server it is
+    // connected to (the one handling its create / join / rejoin / leave). So we
+    // join locally, which happens at once. Through the Redis adapter, a plain
+    // `io.in(id).socketsJoin()` is a pub/sub round trip that lands a moment
+    // LATER — the room state sent right after would miss the new player.
+    // Broadcasts to the room still reach every instance via the adapter.
     async join(socketId: string, gameId: GameId): Promise<void> {
-        this.io.in(socketId).socketsJoin(gameId);
+        this.io.local.in(socketId).socketsJoin(gameId);
     }
 
     async leave(socketId: string, gameId: GameId): Promise<void> {
-        this.io.in(socketId).socketsLeave(gameId);
+        this.io.local.in(socketId).socketsLeave(gameId);
     }
 
     gameChanged(game: Game): void {

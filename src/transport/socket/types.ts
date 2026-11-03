@@ -21,5 +21,7 @@ export interface RoomTarget {
 export interface IoServer {
     to(room: string): Emitter;
     in(room: string): RoomTarget;
+    /** Only this instance's sockets: changes apply right away, not via Redis. */
+    readonly local: { in(room: string): RoomTarget };
     on(event: "connection", listener: (socket: ServerSocket) => void): unknown;
 }
