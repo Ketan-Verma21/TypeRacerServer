@@ -39,28 +39,33 @@ The server is **authoritative**. Players only send the words they type; the serv
 
 ### With Docker (recommended)
 
-Starts **two game servers** (`app1` on port 3000, `app2` on port 3001) and Redis:
+Starts **Nginx** on port **8080** in front of **three game servers** (`app1`, `app2`, `app3`), plus Redis:
 
 ```bash
 cp .env.example .env              # first time only
 docker compose up --build -d
-docker compose ps                 # all three should say (healthy)
-curl localhost:3000/health        # {"ok":true,"db":true,...}
-docker compose logs -f app1 app2  # both servers' logs
+docker compose ps                 # all five should say (healthy)
+curl localhost:8080/health        # {"ok":true,"db":true,...}
+docker compose logs -f app1 app2 app3
 ```
 
 Stop it with `docker compose down` (Redis data is kept in a volume).
 
-#### Try the multi-server setup
-
-Run the app twice, each copy talking to a different server:
-
-```bash
-flutter run -d chrome --web-port 5001 --dart-define=SERVER_URL=http://localhost:3000   # player A -> app1
-flutter run -d chrome --web-port 5002 --dart-define=SERVER_URL=http://localhost:3001   # player B -> app2
+```
+players ──► Nginx :8080 ──► app1 ┐
+              (least_conn)  app2 ├──► Redis (games, race clock, pub/sub)
+                            app3 ┘
 ```
 
-Create a room in A, join it from B, and race: every word, tick and chat message crosses between the two servers through Redis. Then try `docker compose stop app1` in the middle of a race — the race still counts down and ends for player B, because the clock lives in Redis, not in app1.
+Nginx gives each new connection to the least busy server. Run `curl localhost:8080/health/live` a few times to see different servers answer.
+
+#### Try it
+
+```bash
+flutter run -d chrome --dart-define=SERVER_URL=http://localhost:8080
+```
+
+Open two tabs, create a room in one and join from the other — the two players are usually on different servers. In the middle of a race, run `docker compose stop app2`: anyone who was on app2 reconnects through Nginx to another server within a few seconds and keeps racing, because the game, the clock and the 15 s reconnect window all live in Redis.
 
 ### With Node (for development)
 
