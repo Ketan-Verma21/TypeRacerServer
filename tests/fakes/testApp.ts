@@ -6,6 +6,7 @@ import { InMemoryGracePeriods } from "../../src/adapters/memory/InMemoryGracePer
 import { InMemoryGameRepository } from "../../src/adapters/memory/InMemoryGameRepository";
 import { InMemoryLeaderboard } from "../../src/adapters/memory/InMemoryLeaderboard";
 import { InMemoryMatchHistory } from "../../src/adapters/memory/InMemoryMatchHistory";
+import { InMemoryProcessedEvents } from "../../src/adapters/memory/InMemoryProcessedEvents";
 import { InMemoryRaceSchedule } from "../../src/adapters/memory/InMemoryRaceSchedule";
 import { InMemoryRateLimiter } from "../../src/adapters/memory/InMemoryRateLimiter";
 import type { DomainEvent } from "../../src/domain/events";
@@ -37,7 +38,8 @@ export function createTestApp<I extends IdGenerator = SequentialIdGenerator>(
     const ids = (options.ids ?? new SequentialIdGenerator()) as I;
     const leaderboard = new InMemoryLeaderboard();
     const history = new InMemoryMatchHistory();
-    const statsService = new StatsService({ leaderboard, history });
+    const processed = new InMemoryProcessedEvents();
+    const statsService = new StatsService({ leaderboard, history, processed });
     const logger = { info: () => {}, warn: () => {}, error: () => {} };
     const events = new InProcessEventPublisher(logger);
     const published: DomainEvent[] = []; // every event, for tests to check
@@ -52,6 +54,7 @@ export function createTestApp<I extends IdGenerator = SequentialIdGenerator>(
         clock,
         schedule,
         events,
+        ids,
         onError: (err) => {
             throw err; // tests should see clock errors
         },

@@ -10,6 +10,7 @@ import { RedisGameRepository } from "../../src/adapters/redis/RedisGameRepositor
 import { RedisGracePeriods } from "../../src/adapters/redis/RedisGracePeriods";
 import { RedisLeaderboard } from "../../src/adapters/redis/RedisLeaderboard";
 import { RedisMatchHistory } from "../../src/adapters/redis/RedisMatchHistory";
+import { RedisProcessedEvents } from "../../src/adapters/redis/RedisProcessedEvents";
 import { RedisRaceSchedule } from "../../src/adapters/redis/RedisRaceSchedule";
 import { RedisRateLimiter } from "../../src/adapters/redis/RedisRateLimiter";
 import { RedisSessionStore } from "../../src/adapters/redis/RedisSessionStore";
@@ -18,6 +19,7 @@ import { runGameRepositoryContract } from "../contract/gameRepository.contract";
 import { runGracePeriodsContract } from "../contract/gracePeriods.contract";
 import { runLeaderboardContract } from "../contract/leaderboard.contract";
 import { runMatchHistoryContract } from "../contract/matchHistory.contract";
+import { runProcessedEventsContract } from "../contract/processedEvents.contract";
 import { runRaceScheduleContract } from "../contract/raceSchedule.contract";
 import { runRateLimiterContract } from "../contract/rateLimiter.contract";
 import { runSessionStoreContract } from "../contract/sessionStore.contract";
@@ -79,6 +81,11 @@ if (!url) {
     runGracePeriodsContract(
         "RedisGracePeriods (real Redis)",
         async () => new RedisGracePeriods(await fresh()),
+    );
+
+    runProcessedEventsContract(
+        "RedisProcessedEvents (real Redis)",
+        async () => new RedisProcessedEvents(await fresh()),
     );
 
     describe("real Redis atomicity", () => {

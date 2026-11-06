@@ -10,12 +10,14 @@ import { RaceClock } from "../../../src/services/RaceClock";
 import { makeGame, makePlayer } from "../../fakes/builders";
 import { FakeClock } from "../../fakes/FakeClock";
 import { FakeNotifier } from "../../fakes/FakeNotifier";
+import { SequentialIdGenerator } from "../../fakes/SequentialIdGenerator";
 
 function cluster(instances: number) {
     const clock = new FakeClock();
     const games = new InMemoryGameRepository();
     const schedule = new InMemoryRaceSchedule(clock);
     const notifier = new FakeNotifier(); // one "room": sees what every instance sends
+    const ids = new SequentialIdGenerator();
     const published: DomainEvent[] = [];
     const events = new InProcessEventPublisher({ info: () => {}, warn: () => {}, error: () => {} });
     events.subscribe((e) => {
@@ -30,6 +32,7 @@ function cluster(instances: number) {
                 clock,
                 schedule,
                 events,
+                ids,
                 onError: (err) => {
                     throw err;
                 },
@@ -73,6 +76,7 @@ describe("RaceClock with several instances", () => {
             .ofType("gameChanged")
             .filter((g) => g.game.phase === "racing");
         expect(racingUpdates).toHaveLength(1);
+        expect(c.published.filter((e) => e.type === "match.started")).toHaveLength(1);
     });
 
     it("keeps the race going when the instance that started it dies", async () => {
@@ -102,6 +106,7 @@ describe("RaceClock with several instances", () => {
             notifier: c.notifier,
             clock: c.clock,
             schedule: c.schedule,
+            ids: new SequentialIdGenerator(),
             events: new InProcessEventPublisher({
                 info: () => {},
                 warn: () => {},

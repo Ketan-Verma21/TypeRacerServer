@@ -13,7 +13,8 @@ export class RandomIdGenerator implements IdGenerator {
         return randomBytes(12).toString("hex");
     }
 
+    /** Also the deduplication key of a game event, so long enough to never repeat. */
     eventId(): string {
-        return randomBytes(6).toString("hex");
+        return randomBytes(12).toString("hex");
     }
 }

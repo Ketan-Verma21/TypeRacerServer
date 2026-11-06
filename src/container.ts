@@ -6,6 +6,7 @@ import { InMemoryGameRepository } from "./adapters/memory/InMemoryGameRepository
 import { InMemoryGracePeriods } from "./adapters/memory/InMemoryGracePeriods";
 import { InMemoryLeaderboard } from "./adapters/memory/InMemoryLeaderboard";
 import { InMemoryMatchHistory } from "./adapters/memory/InMemoryMatchHistory";
+import { InMemoryProcessedEvents } from "./adapters/memory/InMemoryProcessedEvents";
 import { InMemoryRaceSchedule } from "./adapters/memory/InMemoryRaceSchedule";
 import { InMemoryRateLimiter } from "./adapters/memory/InMemoryRateLimiter";
 import { InMemorySessionStore } from "./adapters/memory/InMemorySessionStore";
@@ -14,6 +15,7 @@ import { RedisGameRepository } from "./adapters/redis/RedisGameRepository";
 import { RedisGracePeriods } from "./adapters/redis/RedisGracePeriods";
 import { RedisLeaderboard } from "./adapters/redis/RedisLeaderboard";
 import { RedisMatchHistory } from "./adapters/redis/RedisMatchHistory";
+import { RedisProcessedEvents } from "./adapters/redis/RedisProcessedEvents";
 import { RedisQuotePool } from "./adapters/redis/RedisQuotePool";
 import { RedisRaceSchedule } from "./adapters/redis/RedisRaceSchedule";
 import { RedisRateLimiter } from "./adapters/redis/RedisRateLimiter";
@@ -36,6 +38,7 @@ import type { GracePeriods } from "./ports/GracePeriods";
 import type { Leaderboard } from "./ports/Leaderboard";
 import type { Logger } from "./ports/Logger";
 import type { MatchHistory } from "./ports/MatchHistory";
+import type { ProcessedEvents } from "./ports/ProcessedEvents";
 import type { QuoteProvider } from "./ports/QuoteProvider";
 import type { RaceSchedule } from "./ports/RaceSchedule";
 import type { RateLimiter } from "./ports/RateLimiter";
@@ -62,6 +65,7 @@ export interface Stores {
     history: MatchHistory;
     raceSchedule: RaceSchedule;
     grace: GracePeriods;
+    processed: ProcessedEvents;
 }
 
 /** The socket handlers' dependencies, plus a way to stop the background timers. */
@@ -85,6 +89,7 @@ export function createStores(store: Store, clock: Clock, redis?: Redis): Stores 
             history: new RedisMatchHistory(redis),
             raceSchedule: new RedisRaceSchedule(redis),
             grace: new RedisGracePeriods(redis),
+            processed: new RedisProcessedEvents(redis),
         };
     }
     return {
@@ -96,6 +101,7 @@ export function createStores(store: Store, clock: Clock, redis?: Redis): Stores 
         history: new InMemoryMatchHistory(),
         raceSchedule: new InMemoryRaceSchedule(clock),
         grace: new InMemoryGracePeriods(),
+        processed: new InMemoryProcessedEvents(),
     };
 }
 
@@ -113,9 +119,9 @@ export function buildContainer(
     const notifier = new SocketIoNotifier(io);
 
     const timers: (() => void)[] = []; // stop functions of everything we start
-    const { games, chat, sessions, limiter, leaderboard, history, raceSchedule, grace } =
-        createStores(config.store, clock, redis);
-    const statsService = new StatsService({ leaderboard, history });
+    const stores = createStores(config.store, clock, redis);
+    const { games, chat, sessions, limiter, leaderboard, history, raceSchedule, grace } = stores;
+    const statsService = new StatsService({ leaderboard, history, processed: stores.processed });
     const events = new InProcessEventPublisher(logger);
     events.subscribe((event) => statsService.onEvent(event));
 
@@ -152,6 +158,7 @@ export function buildContainer(
         clock,
         schedule: raceSchedule,
         events,
+        ids,
         onError: (err, gameId) => logger.error("race clock failed", { gameId, err: String(err) }),
     });
 
