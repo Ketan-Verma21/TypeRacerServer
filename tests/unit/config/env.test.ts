@@ -11,6 +11,8 @@ describe("loadConfig", () => {
             quotesApiKey: "",
             store: "memory",
             redisUrl: "redis://localhost:6379",
+            events: "inprocess",
+            kafkaBrokers: ["localhost:9094"],
         });
     });
 
@@ -22,6 +24,8 @@ describe("loadConfig", () => {
             API_KEY: "k",
             STORE: "redis",
             REDIS_URL: "redis://redis:6379",
+            EVENTS: "kafka",
+            KAFKA_BROKERS: "kafka:9092,kafka-2:9092",
         });
 
         expect(config).toMatchObject({
@@ -31,6 +35,8 @@ describe("loadConfig", () => {
             quotesApiKey: "k",
             store: "redis",
             redisUrl: "redis://redis:6379",
+            events: "kafka",
+            kafkaBrokers: ["kafka:9092", "kafka-2:9092"],
         });
     });
 
@@ -41,6 +47,9 @@ describe("loadConfig", () => {
         [{ API_URL: "not a url" }, "API_URL"],
         [{ STORE: "mongo" }, "STORE"],
         [{ REDIS_URL: "http://localhost:6379" }, "REDIS_URL"],
+        [{ EVENTS: "rabbitmq" }, "EVENTS"],
+        [{ KAFKA_BROKERS: "kafka" }, "KAFKA_BROKERS"],
+        [{ KAFKA_BROKERS: "kafka:9092," }, "KAFKA_BROKERS"],
     ])("fails fast with a clear message for %j", (env, name) => {
         expect(() => loadConfig(env)).toThrow(name);
     });
