@@ -19,7 +19,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:redis": "vitest run tests/integration",
-    "bench:redis": "tsx tests/bench/redisLatency.ts"
+    "bench:redis": "tsx tests/bench/redisLatency.ts",
+    "load": "tsx tests/load/run.ts"
   },
   "author": "",
   "license": "ISC",
