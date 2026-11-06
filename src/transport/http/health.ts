@@ -10,7 +10,16 @@ const alwaysReady: ReadinessCheck = async () => true;
  * server and waits for `db: true`, so `db` reports whether the store is
  * reachable (always true with STORE=memory).
  */
-export function healthRouter(isReady: ReadinessCheck = alwaysReady): Router {
+export interface HealthOptions {
+    isReady?: ReadinessCheck;
+    /** Shown by /health/live, so you can see which server behind Nginx answered. */
+    instanceId?: string;
+}
+
+export function healthRouter({
+    isReady = alwaysReady,
+    instanceId = "app",
+}: HealthOptions = {}): Router {
     const ready = (): Promise<boolean> => isReady().catch(() => false);
     const router = Router();
     router.get("/health", async (_req, res) => {
@@ -19,7 +28,7 @@ export function healthRouter(isReady: ReadinessCheck = alwaysReady): Router {
     });
     // liveness: the process is up (never checks Redis, so Docker doesn't restart us for it).
     router.get("/health/live", (_req, res) => {
-        res.json({ ok: true });
+        res.json({ ok: true, instance: instanceId });
     });
     // readiness: it can serve games. 503 tells a load balancer to skip this instance.
     router.get("/health/ready", async (_req, res) => {

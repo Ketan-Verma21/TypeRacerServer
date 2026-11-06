@@ -21,7 +21,7 @@ process.on("unhandledRejection", (reason) =>
 const redis = config.store === "redis" ? createRedisClient(config.redisUrl, logger) : undefined;
 const isReady = redis ? () => isRedisReady(redis) : undefined;
 
-const server = http.createServer(createHttpApp({ isReady }));
+const server = http.createServer(createHttpApp({ isReady, instanceId: config.instanceId }));
 const socketServer = createSocketServer(server);
 // With Redis, broadcasts reach players on every server instance (Phase 5).
 const closeAdapter = redis

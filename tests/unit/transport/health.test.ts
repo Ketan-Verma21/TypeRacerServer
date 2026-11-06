@@ -49,6 +49,12 @@ describe("health routes", () => {
     it("stays live even when the store is down", async () => {
         const res = await request("/health/live", { isReady: async () => false });
 
-        expect(res).toEqual({ status: 200, body: { ok: true } });
+        expect(res).toEqual({ status: 200, body: { ok: true, instance: "app" } });
+    });
+
+    it("says which instance answered, so Nginx's balancing is visible", async () => {
+        const res = await request("/health/live", { instanceId: "app2" });
+
+        expect(res.body).toEqual({ ok: true, instance: "app2" });
     });
 });

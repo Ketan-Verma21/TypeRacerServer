@@ -39,28 +39,33 @@ The server is **authoritative**. Players only send the words they type; the serv
 
 ### With Docker (recommended)
 
-Starts **two game servers** (`app1` on port 3000, `app2` on port 3001) and Redis:
+Starts **Nginx** on port **8080** in front of **three game servers** (`app1`, `app2`, `app3`), plus Redis:
 
 ```bash
 cp .env.example .env              # first time only
 docker compose up --build -d
-docker compose ps                 # all three should say (healthy)
-curl localhost:3000/health        # {"ok":true,"db":true,...}
-docker compose logs -f app1 app2  # both servers' logs
+docker compose ps                 # all five should say (healthy)
+curl localhost:8080/health        # {"ok":true,"db":true,...}
+docker compose logs -f app1 app2 app3
 ```
 
 Stop it with `docker compose down` (Redis data is kept in a volume).
 
-#### Try the multi-server setup
-
-Run the app twice, each copy talking to a different server:
-
-```bash
-flutter run -d chrome --web-port 5001 --dart-define=SERVER_URL=http://localhost:3000   # player A -> app1
-flutter run -d chrome --web-port 5002 --dart-define=SERVER_URL=http://localhost:3001   # player B -> app2
+```
+players ──► Nginx :8080 ──► app1 ┐
+              (least_conn)  app2 ├──► Redis (games, race clock, pub/sub)
+                            app3 ┘
 ```
 
-Create a room in A, join it from B, and race: every word, tick and chat message crosses between the two servers through Redis. Then try `docker compose stop app1` in the middle of a race — the race still counts down and ends for player B, because the clock lives in Redis, not in app1.
+Nginx gives each new connection to the least busy server. Run `curl localhost:8080/health/live` a few times to see different servers answer.
+
+#### Try it
+
+```bash
+flutter run -d chrome --dart-define=SERVER_URL=http://localhost:8080
+```
+
+Open two tabs, create a room in one and join from the other — the two players are usually on different servers. In the middle of a race, run `docker compose stop app2`: anyone who was on app2 reconnects through Nginx to another server within a few seconds and keeps racing, because the game, the clock and the 15 s reconnect window all live in Redis.
 
 ### With Node (for development)
 
@@ -150,6 +155,20 @@ Every room key expires **2 hours** after the room's last activity. Changes that 
 
 ---
 
+## 📈 Performance
+
+Load-tested with bots that play real races through Nginx (details: [docs/load-test.md](docs/load-test.md)), all on one laptop (i7-1165G7):
+
+| Players | Servers | Races finished | Word → everyone (p95)             |
+| ------- | ------- | -------------- | --------------------------------- |
+| 1,000   | 3       | 125 / 125      | **17 ms**                         |
+| 2,000   | 2       | 250 / 250      | **77 ms**                         |
+| 2,000   | 1       | 239 / 250      | 527 ms — one server is overloaded |
+
+**Killing a server mid-race:** all 333 of its players reconnected to the other servers in under a second (p95 0.96 s), and all 125 races finished.
+
+---
+
 ## 🔌 Socket events
 
 **App → server**
@@ -188,6 +207,7 @@ HTTP: `GET /health` (used by the app to wake the server), `/health/live` (proces
 npm test               # unit, contract and end-to-end tests — no Docker needed
 npm run typecheck
 npm run lint
+npm run load -- --rooms 5   # load test against the running Docker stack (see docs/load-test.md)
 ```
 
 - **Contract tests**: each interface (games, chat, sessions, rate limiting, leaderboard, history) has one shared test suite, and **both** the in-memory and the Redis versions must pass it. That's how we know the switch to Redis changed nothing.
@@ -216,7 +236,7 @@ Measured on a laptop with Redis in Docker — store time for one action:
 | ✅  | TypeScript rewrite with SOLID, validation, structured logs, 6-char room codes              |
 | ✅  | Docker Compose; Redis as the datastore; leaderboard and match history                      |
 | ✅  | **Several servers at once**: Socket.IO 4, Redis adapter, a race clock shared through Redis |
-| ⬜  | Nginx load balancer + load testing                                                         |
+| ✅  | Nginx load balancer + load testing (1,000+ players, a server killed mid-race)              |
 | ⬜  | Kafka for post-race events (stats, anti-cheat)                                             |
 | ⬜  | CI with GitHub Actions                                                                     |
 
