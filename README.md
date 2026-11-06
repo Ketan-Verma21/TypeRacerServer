@@ -155,6 +155,20 @@ Every room key expires **2 hours** after the room's last activity. Changes that 
 
 ---
 
+## 📈 Performance
+
+Load-tested with bots that play real races through Nginx (details: [docs/load-test.md](docs/load-test.md)), all on one laptop (i7-1165G7):
+
+| Players | Servers | Races finished | Word → everyone (p95)             |
+| ------- | ------- | -------------- | --------------------------------- |
+| 1,000   | 3       | 125 / 125      | **17 ms**                         |
+| 2,000   | 2       | 250 / 250      | **77 ms**                         |
+| 2,000   | 1       | 239 / 250      | 527 ms — one server is overloaded |
+
+**Killing a server mid-race:** all 333 of its players reconnected to the other servers in under a second (p95 0.96 s), and all 125 races finished.
+
+---
+
 ## 🔌 Socket events
 
 **App → server**
@@ -193,6 +207,7 @@ HTTP: `GET /health` (used by the app to wake the server), `/health/live` (proces
 npm test               # unit, contract and end-to-end tests — no Docker needed
 npm run typecheck
 npm run lint
+npm run load -- --rooms 5   # load test against the running Docker stack (see docs/load-test.md)
 ```
 
 - **Contract tests**: each interface (games, chat, sessions, rate limiting, leaderboard, history) has one shared test suite, and **both** the in-memory and the Redis versions must pass it. That's how we know the switch to Redis changed nothing.
@@ -221,7 +236,7 @@ Measured on a laptop with Redis in Docker — store time for one action:
 | ✅  | TypeScript rewrite with SOLID, validation, structured logs, 6-char room codes              |
 | ✅  | Docker Compose; Redis as the datastore; leaderboard and match history                      |
 | ✅  | **Several servers at once**: Socket.IO 4, Redis adapter, a race clock shared through Redis |
-| ⬜  | Nginx load balancer + load testing                                                         |
+| ✅  | Nginx load balancer + load testing (1,000+ players, a server killed mid-race)              |
 | ⬜  | Kafka for post-race events (stats, anti-cheat)                                             |
 | ⬜  | CI with GitHub Actions                                                                     |
 
