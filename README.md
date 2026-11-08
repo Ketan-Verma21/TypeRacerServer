@@ -40,12 +40,12 @@ The server is **authoritative**. Players only send the words they type; the serv
 
 ### With Docker (recommended)
 
-Starts **Nginx** on port **8080** in front of **three game servers** (`app1`, `app2`, `app3`), plus Redis and Kafka:
+Starts **Nginx** on port **8080** in front of **three game servers** (`app1`, `app2`, `app3`), plus Redis, Kafka and a **stats worker**:
 
 ```bash
 cp .env.example .env              # first time only
 docker compose up --build -d
-docker compose ps                 # every service (healthy); kafka-init "exited (0)" after creating the topics
+docker compose ps                 # every service up; kafka-init "exited (0)" after creating the topics
 curl localhost:8080/health        # {"ok":true,"db":true,...}
 docker compose logs -f app1 app2 app3
 ```
@@ -54,11 +54,15 @@ Stop it with `docker compose down` (Redis data is kept in a volume).
 
 ```
 players ──► Nginx :8080 ──► app1 ┐
-              (least_conn)  app2 ├──► Redis (games, race clock, pub/sub)
-                            app3 ┘
-                              │
-                              └──► Kafka (match.started, match.finished)
+              (least_conn)  app2 ├──► Redis (games, race clock, pub/sub, stats)
+                            app3 ┘           ▲
+                              │              │ leaderboard, match history
+                              ▼              │
+                            Kafka ───► stats-worker
+              (match.started, match.finished)
 ```
+
+The game servers only **send** an event when a race starts or ends. The stats worker reads them and updates the leaderboard and match history, so a slow stats write can never slow a race down.
 
 Nginx gives each new connection to the least busy server. Run `curl localhost:8080/health/live` a few times to see different servers answer.
 
@@ -75,6 +79,7 @@ Open two tabs, create a room in one and join from the other — the two players 
 ```bash
 npm ci
 npm run dev        # restarts on every change; uses the in-memory store
+npm run dev:worker # the stats worker (needs STORE=redis and EVENTS=kafka)
 ```
 
 Then run the app against it:
@@ -125,6 +130,7 @@ The code follows **SOLID** with a "ports and adapters" layout:
 ```
 src/
 ├── index.ts          start the server
+├── worker.ts         start the stats worker (Kafka → StatsService → Redis)
 ├── container.ts      wires everything together (the only place that picks concrete classes)
 ├── config/           settings and game limits
 ├── domain/           pure game rules, modes, events

@@ -50,7 +50,9 @@ services:
             app3:
                 condition: service_healthy
         healthcheck:
-            test: ["CMD", "wget", "-qO-", "http://localhost/health/live"]
+            # 127.0.0.1, not localhost: inside the container localhost can mean
+            # IPv6 (::1), and Nginx only listens on IPv4.
+            test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health/live"]
             interval: 10s
             timeout: 3s
             retries: 3
@@ -73,6 +75,19 @@ services:
         environment:
             <<: *app-env
             INSTANCE_ID: app3
+
+    stats-worker:
+        # Reads match events from Kafka and writes the leaderboard and match
+        # history to Redis (src/worker.ts). Same image, different command.
+        # Try `docker compose up -d --scale stats-worker=2`: Kafka splits the
+        # partitions between the two.
+        <<: *app
+        command: ["node", "dist/worker.js"]
+        environment:
+            <<: *app-env
+            INSTANCE_ID: stats-worker
+        healthcheck:
+            disable: true # no HTTP server; `docker compose logs stats-worker` shows it working
 
     redis:
         # Games, sessions, the race clock and the pub/sub between the servers.
