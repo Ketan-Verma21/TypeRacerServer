@@ -178,6 +178,19 @@ Load-tested with bots that play real races through Nginx (details: [docs/load-te
 
 **Killing a server mid-race:** all 333 of its players reconnected to the other servers in under a second (p95 0.96 s), and all 125 races finished.
 
+### Kafka experiments
+
+Details: [docs/kafka.md](docs/kafka.md).
+
+| What we did                            | What happened                                                                   |
+| -------------------------------------- | ------------------------------------------------------------------------------- |
+| Stopped the stats worker, ran 20 races | All 20 finished; 40 events waited in Kafka; the restarted worker counted all 20 |
+| Ran two stats workers                  | Kafka gave each one 2 of the 4 partitions, no code change                       |
+| Wiped the stats in Redis               | Replayed every event from Kafka: match count back to exactly 42                 |
+| Stopped Kafka for 30 s during 10 races | All 10 finished (p95 7 ms); all 10 counted once Kafka was back                  |
+
+Every event has an `eventId`, and the worker commits its Kafka offset only after Redis has the result, so a crash or a replay never counts a race twice.
+
 ---
 
 ## 🔌 Socket events
@@ -248,7 +261,7 @@ Measured on a laptop with Redis in Docker — store time for one action:
 | ✅  | Docker Compose; Redis as the datastore; leaderboard and match history                      |
 | ✅  | **Several servers at once**: Socket.IO 4, Redis adapter, a race clock shared through Redis |
 | ✅  | Nginx load balancer + load testing (1,000+ players, a server killed mid-race)              |
-| ⬜  | Kafka for post-race events (stats, anti-cheat)                                             |
+| ✅  | Kafka for post-race events: a stats worker, replay, anti-cheat flags                       |
 | ⬜  | CI with GitHub Actions                                                                     |
 
 ## 📬 Contact
