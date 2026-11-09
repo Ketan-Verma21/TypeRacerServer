@@ -257,6 +257,12 @@ Measured on a laptop with Redis in Docker — store time for one action:
 
 ---
 
+## ☁️ Deploy
+
+Production runs on **Render**: one game server (free web service, Node 20) plus **Render Key Value** (Redis) in the same region, with Kafka off (`EVENTS=inprocess`). Settings, environment variables and checks: [docs/deploy.md](docs/deploy.md).
+
+---
+
 ## 🛣️ Roadmap
 
 |     |                                                                                            |
