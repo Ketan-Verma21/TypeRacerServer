@@ -8,10 +8,6 @@ The server is **authoritative**. Players only send the words they type; the serv
 
 > The Flutter app lives in [Ketan-Verma21/Type_Racer](https://github.com/Ketan-Verma21/Type_Racer).
 
-## 🎬 Demo
-
-[![Watch the demo](https://img.youtube.com/vi/h-L4iLzStZU/hqdefault.jpg)](https://youtu.be/h-L4iLzStZU)
-
 ---
 
 ## ✨ What it does
