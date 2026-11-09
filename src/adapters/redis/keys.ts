@@ -25,4 +25,6 @@ export const keys = {
     raceClock: (): string => "games:clock",
     tick: (id: GameId, label: string): string => `tick:${id}:${label}`,
     presenceGrace: (): string => "presence:grace",
+    processedEvent: (eventId: string): string => `stats:done:${eventId}`,
+    matchCounts: (): string => "stats:matches",
 } as const;

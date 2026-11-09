@@ -1,11 +1,13 @@
 // COMPOSITION ROOT: the only file that picks concrete classes.
-// Swapping in-memory -> Redis (Phase 4) or adding Kafka (Phase 7) happens here.
+// Swapping in-memory -> Redis (STORE) or in-process -> Kafka events (EVENTS) happens here.
 import { InMemoryChatRepository } from "./adapters/memory/InMemoryChatRepository";
 import { InProcessEventPublisher } from "./adapters/events/InProcessEventPublisher";
+import { KafkaEventPublisher, type KafkaSender } from "./adapters/kafka/KafkaEventPublisher";
 import { InMemoryGameRepository } from "./adapters/memory/InMemoryGameRepository";
 import { InMemoryGracePeriods } from "./adapters/memory/InMemoryGracePeriods";
 import { InMemoryLeaderboard } from "./adapters/memory/InMemoryLeaderboard";
 import { InMemoryMatchHistory } from "./adapters/memory/InMemoryMatchHistory";
+import { InMemoryProcessedEvents } from "./adapters/memory/InMemoryProcessedEvents";
 import { InMemoryRaceSchedule } from "./adapters/memory/InMemoryRaceSchedule";
 import { InMemoryRateLimiter } from "./adapters/memory/InMemoryRateLimiter";
 import { InMemorySessionStore } from "./adapters/memory/InMemorySessionStore";
@@ -14,6 +16,7 @@ import { RedisGameRepository } from "./adapters/redis/RedisGameRepository";
 import { RedisGracePeriods } from "./adapters/redis/RedisGracePeriods";
 import { RedisLeaderboard } from "./adapters/redis/RedisLeaderboard";
 import { RedisMatchHistory } from "./adapters/redis/RedisMatchHistory";
+import { RedisProcessedEvents } from "./adapters/redis/RedisProcessedEvents";
 import { RedisQuotePool } from "./adapters/redis/RedisQuotePool";
 import { RedisRaceSchedule } from "./adapters/redis/RedisRaceSchedule";
 import { RedisRateLimiter } from "./adapters/redis/RedisRateLimiter";
@@ -27,15 +30,17 @@ import { RandomIdGenerator } from "./adapters/RandomIdGenerator";
 import { SocketIoNotifier } from "./adapters/socket/SocketIoNotifier";
 import { SystemClock } from "./adapters/SystemClock";
 import type { Redis } from "ioredis";
-import type { Config, Store } from "./config/env";
+import type { Config, EventBus, Store } from "./config/env";
 import { createDefaultModeRegistry } from "./domain/modes/modeRegistry";
 import type { ChatRepository } from "./ports/ChatRepository";
+import type { EventPublisher } from "./ports/EventPublisher";
 import type { Clock } from "./ports/Clock";
 import type { GameRepository } from "./ports/GameRepository";
 import type { GracePeriods } from "./ports/GracePeriods";
 import type { Leaderboard } from "./ports/Leaderboard";
 import type { Logger } from "./ports/Logger";
 import type { MatchHistory } from "./ports/MatchHistory";
+import type { ProcessedEvents } from "./ports/ProcessedEvents";
 import type { QuoteProvider } from "./ports/QuoteProvider";
 import type { RaceSchedule } from "./ports/RaceSchedule";
 import type { RateLimiter } from "./ports/RateLimiter";
@@ -62,6 +67,7 @@ export interface Stores {
     history: MatchHistory;
     raceSchedule: RaceSchedule;
     grace: GracePeriods;
+    processed: ProcessedEvents;
 }
 
 /** The socket handlers' dependencies, plus a way to stop the background timers. */
@@ -85,6 +91,7 @@ export function createStores(store: Store, clock: Clock, redis?: Redis): Stores 
             history: new RedisMatchHistory(redis),
             raceSchedule: new RedisRaceSchedule(redis),
             grace: new RedisGracePeriods(redis),
+            processed: new RedisProcessedEvents(redis),
         };
     }
     return {
@@ -96,7 +103,28 @@ export function createStores(store: Store, clock: Clock, redis?: Redis): Stores 
         history: new InMemoryMatchHistory(),
         raceSchedule: new InMemoryRaceSchedule(clock),
         grace: new InMemoryGracePeriods(),
+        processed: new InMemoryProcessedEvents(),
     };
+}
+
+/**
+ * EVENTS=inprocess | kafka. In-process, this server updates the stats itself.
+ * With Kafka, events go to a topic and the stats worker (src/worker.ts) does it,
+ * so a slow leaderboard write can never slow down a race.
+ */
+export function createEventPublisher(
+    bus: EventBus,
+    logger: Logger,
+    stats: StatsService,
+    kafka?: KafkaSender,
+): EventPublisher {
+    if (bus === "kafka") {
+        if (!kafka) throw new Error("EVENTS=kafka needs a Kafka producer");
+        return new KafkaEventPublisher(kafka, logger);
+    }
+    const events = new InProcessEventPublisher(logger);
+    events.subscribe((event) => stats.onEvent(event));
+    return events;
 }
 
 export function buildContainer(
@@ -104,6 +132,7 @@ export function buildContainer(
     io: IoServer,
     logger: Logger,
     redis?: Redis,
+    kafka?: KafkaSender,
 ): Container {
     const clock = new SystemClock();
     const scheduler = new IntervalScheduler((err) =>
@@ -113,11 +142,10 @@ export function buildContainer(
     const notifier = new SocketIoNotifier(io);
 
     const timers: (() => void)[] = []; // stop functions of everything we start
-    const { games, chat, sessions, limiter, leaderboard, history, raceSchedule, grace } =
-        createStores(config.store, clock, redis);
-    const statsService = new StatsService({ leaderboard, history });
-    const events = new InProcessEventPublisher(logger);
-    events.subscribe((event) => statsService.onEvent(event));
+    const stores = createStores(config.store, clock, redis);
+    const { games, chat, sessions, limiter, leaderboard, history, raceSchedule, grace } = stores;
+    const statsService = new StatsService({ leaderboard, history, processed: stores.processed });
+    const events = createEventPublisher(config.events, logger, statsService, kafka);
 
     // Quote sources, tried in order: Redis pool (pre-fetched) -> API Ninjas
     // live -> bundled quotes. The pool and API are only used with an API key.
@@ -152,6 +180,7 @@ export function buildContainer(
         clock,
         schedule: raceSchedule,
         events,
+        ids,
         onError: (err, gameId) => logger.error("race clock failed", { gameId, err: String(err) }),
     });
 

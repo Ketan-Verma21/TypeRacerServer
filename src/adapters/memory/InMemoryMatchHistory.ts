@@ -1,3 +1,4 @@
+import type { ModeId } from "../../config/constants";
 import type { MatchSummary } from "../../domain/events";
 import type { GameId } from "../../domain/types";
 import type { MatchHistory } from "../../ports/MatchHistory";
@@ -5,6 +6,7 @@ import type { MatchHistory } from "../../ports/MatchHistory";
 export class InMemoryMatchHistory implements MatchHistory {
     private readonly all: MatchSummary[] = [];
     private readonly byGame = new Map<GameId, MatchSummary[]>();
+    private readonly started = new Map<ModeId, number>();
 
     constructor(
         private readonly maxRecent = 500,
@@ -26,5 +28,13 @@ export class InMemoryMatchHistory implements MatchHistory {
 
     async forGame(gameId: GameId): Promise<MatchSummary[]> {
         return structuredClone(this.byGame.get(gameId) ?? []);
+    }
+
+    async countStarted(mode: ModeId): Promise<void> {
+        this.started.set(mode, (this.started.get(mode) ?? 0) + 1);
+    }
+
+    async startedCount(mode: ModeId): Promise<number> {
+        return this.started.get(mode) ?? 0;
     }
 }

@@ -33,6 +33,18 @@ export function runMatchHistoryContract(
             expect((await history.recent(10)).map((m) => m.round)).toEqual([3, 2]);
         });
 
+        it("counts started races per mode", async () => {
+            const history = await create(10, 10);
+
+            await history.countStarted("classic");
+            await history.countStarted("classic");
+            await history.countStarted("sudden-death");
+
+            expect(await history.startedCount("classic")).toBe(2);
+            expect(await history.startedCount("sudden-death")).toBe(1);
+            expect(await history.startedCount("no-mistakes")).toBe(0);
+        });
+
         it("keeps a separate, capped history per room", async () => {
             const history = await create(10, 2);
             for (let round = 1; round <= 3; round++) await history.add(match("g1", round));

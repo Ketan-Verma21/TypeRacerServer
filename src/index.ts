@@ -4,6 +4,8 @@ import http from "node:http";
 import { createHttpApp } from "./app";
 import { loadConfig } from "./config/env";
 import { buildContainer } from "./container";
+import { createKafka, createProducer } from "./infra/kafka";
+import { keepTrying } from "./infra/keepTrying";
 import { PinoLogger } from "./infra/PinoLogger";
 import { createRedisClient, isRedisReady } from "./infra/redis";
 import { attachRedisAdapter } from "./infra/redisAdapter";
@@ -21,6 +23,14 @@ process.on("unhandledRejection", (reason) =>
 const redis = config.store === "redis" ? createRedisClient(config.redisUrl, logger) : undefined;
 const isReady = redis ? () => isRedisReady(redis) : undefined;
 
+// EVENTS=kafka: match events go to Kafka (Phase 7). Connecting never blocks
+// startup, and a Kafka outage never makes the server "not ready": races don't need it.
+const producer =
+    config.events === "kafka"
+        ? createProducer(createKafka(config.kafkaBrokers, config.instanceId))
+        : undefined;
+const stopConnecting = producer ? keepTrying("kafka", () => producer.connect(), logger) : () => {};
+
 const server = http.createServer(createHttpApp({ isReady, instanceId: config.instanceId }));
 const socketServer = createSocketServer(server);
 // With Redis, broadcasts reach players on every server instance (Phase 5).
@@ -30,13 +40,14 @@ const closeAdapter = redis
       )
     : async () => {};
 const io = socketServer as unknown as IoServer;
-const container = buildContainer(config, io, logger, redis);
+const container = buildContainer(config, io, logger, redis, producer);
 registerSocketHandlers(io, container);
 
 server.listen(config.port, "0.0.0.0", () => {
     logger.info("Type Racer server listening", {
         port: config.port,
         store: config.store,
+        events: config.events,
         instanceId: config.instanceId,
     });
 });
@@ -49,8 +60,12 @@ function shutdown(signal: string): void {
     stopping = true;
     logger.info("shutting down", { signal });
     container.stop(); // no more sweeps from this instance; the others carry on
+    stopConnecting();
     socketServer.close(); // also closes the HTTP server
-    void Promise.allSettled([closeAdapter(), redis?.quit()]).finally(() => process.exit(0));
+    // producer.disconnect() first sends any events still waiting in its buffer.
+    void Promise.allSettled([closeAdapter(), redis?.quit(), producer?.disconnect()]).finally(() =>
+        process.exit(0),
+    );
     setTimeout(() => process.exit(0), 3000).unref(); // don't wait forever
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));

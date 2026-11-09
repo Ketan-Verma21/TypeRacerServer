@@ -1,4 +1,5 @@
 import type { Redis } from "ioredis";
+import type { ModeId } from "../../config/constants";
 import type { MatchSummary } from "../../domain/events";
 import type { GameId } from "../../domain/types";
 import type { MatchHistory } from "../../ports/MatchHistory";
@@ -11,6 +12,7 @@ const parse = (items: string[]): MatchSummary[] =>
  * Two capped lists (LPUSH = newest first, LTRIM = keep the last N):
  *   matches:recent     every room, last 500
  *   game:{id}:history  one room, last 20 — expires with the room
+ * plus a hash stats:matches (mode -> races started), via HINCRBY.
  */
 export class RedisMatchHistory implements MatchHistory {
     constructor(
@@ -40,5 +42,13 @@ export class RedisMatchHistory implements MatchHistory {
 
     async forGame(gameId: GameId): Promise<MatchSummary[]> {
         return parse(await this.redis.lrange(keys.history(gameId), 0, -1));
+    }
+
+    async countStarted(mode: ModeId): Promise<void> {
+        await this.redis.hincrby(keys.matchCounts(), mode, 1);
+    }
+
+    async startedCount(mode: ModeId): Promise<number> {
+        return Number((await this.redis.hget(keys.matchCounts(), mode)) ?? 0);
     }
 }

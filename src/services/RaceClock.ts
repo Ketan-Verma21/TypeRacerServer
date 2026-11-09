@@ -6,7 +6,7 @@
 // sent once and each phase change happens once, whichever instance does it —
 // so a race keeps going if the server that started it dies or restarts.
 import { COUNTDOWN_SECONDS } from "../config/constants";
-import { matchFinished } from "../domain/events";
+import { matchFinished, matchStarted } from "../domain/events";
 import { wpmAt } from "../domain/modes/ModeStrategy";
 import { racersOf } from "../domain/rules";
 import { formatClock } from "../domain/time";
@@ -14,6 +14,7 @@ import type { GameId } from "../domain/types";
 import type { Clock } from "../ports/Clock";
 import type { EventPublisher } from "../ports/EventPublisher";
 import type { GameRepository } from "../ports/GameRepository";
+import type { IdGenerator } from "../ports/IdGenerator";
 import type { Notifier } from "../ports/Notifier";
 import type { RaceSchedule } from "../ports/RaceSchedule";
 
@@ -23,6 +24,7 @@ export interface RaceClockDeps {
     clock: Clock;
     schedule: RaceSchedule;
     events: EventPublisher;
+    ids: IdGenerator;
     /** One game failing must not stop the clock for the others. */
     onError: (err: unknown, gameId: GameId) => void;
 }
@@ -116,7 +118,10 @@ export class RaceClock {
         const deadline = raceDeadline(second, timeLimit);
         await schedule.add(gameId, deadline);
         const racing = await games.get(gameId);
-        if (racing) notifier.gameChanged(racing);
+        if (racing) {
+            notifier.gameChanged(racing);
+            void this.deps.events.publish(matchStarted(racing, this.deps.ids.eventId(), second));
+        }
         await this.tick(gameId, deadline, second); // show the full time right away
     }
 
@@ -137,6 +142,6 @@ export class RaceClock {
         if (over) notifier.gameChanged(over);
         notifier.raceOver(gameId);
         // Stats after the players are told. Fire and forget: never delays or breaks the race.
-        if (over) void events.publish(matchFinished(over, now));
+        if (over) void events.publish(matchFinished(over, this.deps.ids.eventId(), now));
     }
 }
