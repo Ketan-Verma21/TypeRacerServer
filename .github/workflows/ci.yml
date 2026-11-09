@@ -1,0 +1,60 @@
+# Server CI (Phase 9): the same checks as the local commit rule
+# (format -> typecheck -> lint -> test), plus the real-Redis suites and a
+# Docker build. Runs on every push and pull request.
+name: CI
+
+on:
+    push:
+    pull_request:
+
+concurrency: # a newer push cancels the older run of the same branch
+    group: ci-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    test:
+        name: Format, types, lint, tests
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+
+        services:
+            redis: # real Redis for `npm run test:redis` (database 15, wiped by the tests)
+                image: redis:7
+                ports: ["6379:6379"]
+                options: >-
+                    --health-cmd "redis-cli ping"
+                    --health-interval 5s
+                    --health-timeout 3s
+                    --health-retries 10
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 20
+                  cache: npm
+
+            # also builds the native Kafka client (prebuilt download or compile)
+            - run: npm ci
+
+            - run: npm run format:check
+            - run: npm run typecheck
+            - run: npm run lint
+            - run: npm run test:coverage
+
+            - name: Tests on real Redis (contract suites + two servers sharing it)
+              run: npm run test:redis
+              env:
+                  REDIS_TEST_URL: redis://localhost:6379/15
+
+            - run: npm run build
+
+    docker:
+        name: Docker image builds
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        needs: test
+        steps:
+            - uses: actions/checkout@v4
+            - run: docker build -t type-racer-server .
