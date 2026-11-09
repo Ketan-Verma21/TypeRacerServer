@@ -1,5 +1,7 @@
 # 🏎️ Type Racer — Server
 
+[![CI](https://github.com/Ketan-Verma21/TypeRacerServer/actions/workflows/ci.yml/badge.svg)](https://github.com/Ketan-Verma21/TypeRacerServer/actions/workflows/ci.yml)
+
 The real-time game server for **Type Racer**, a multiplayer typing race: a host creates a room, friends join with a 6-character code, and everyone types the same quote at the same time.
 
 The server is **authoritative**. Players only send the words they type; the server checks every word, runs the clock, works out WPM and rankings, and sends everyone the same game state. A player can't fake a score, because the score is never theirs to send.
@@ -244,12 +246,20 @@ REDIS_TEST_URL=redis://localhost:6379/15 npm run bench:redis    # latency benchm
 
 (These use Redis database 15 and wipe it; database 0, where games live, is refused.)
 
+**CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all of this on every push and pull request: `format:check` → `typecheck` → `lint` → `test:coverage` → the real-Redis suites (Redis as a service container) → `build`, then checks that the Docker image builds.
+
 Measured on a laptop with Redis in Docker — store time for one action:
 
 | Action      | p50     | p95     | p99     |
 | ----------- | ------- | ------- | ------- |
 | Join a room | 0.43 ms | 0.69 ms | 1.08 ms |
 | Type a word | 0.39 ms | 0.64 ms | 0.97 ms |
+
+---
+
+## ☁️ Deploy
+
+Production runs on **Render**: one game server (free web service, Node 20) plus **Render Key Value** (Redis) in the same region, with Kafka off (`EVENTS=inprocess`). Settings, environment variables and checks: [docs/deploy.md](docs/deploy.md).
 
 ---
 
@@ -262,7 +272,7 @@ Measured on a laptop with Redis in Docker — store time for one action:
 | ✅  | **Several servers at once**: Socket.IO 4, Redis adapter, a race clock shared through Redis |
 | ✅  | Nginx load balancer + load testing (1,000+ players, a server killed mid-race)              |
 | ✅  | Kafka for post-race events: a stats worker, replay, anti-cheat flags                       |
-| ⬜  | CI with GitHub Actions                                                                     |
+| ✅  | CI with GitHub Actions: format, types, lint, tests (+ real Redis), Docker build            |
 
 ## 📬 Contact
 
