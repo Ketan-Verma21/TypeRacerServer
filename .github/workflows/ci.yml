@@ -35,8 +35,10 @@ jobs:
                   node-version: 20
                   cache: npm
 
-            # also builds the native Kafka client (prebuilt download or compile)
-            - run: npm ci
+            # --ignore-scripts: don't download/compile the native Kafka client.
+            # No test loads it (only src/index.ts and src/worker.ts do); the
+            # docker job below builds the real thing.
+            - run: npm ci --ignore-scripts
 
             - run: npm run format:check
             - run: npm run typecheck
@@ -53,8 +55,16 @@ jobs:
     docker:
         name: Docker image builds
         runs-on: ubuntu-latest
-        timeout-minutes: 20
+        timeout-minutes: 30
         needs: test
         steps:
             - uses: actions/checkout@v4
-            - run: docker build -t type-racer-server .
+            # The native Kafka client downloads a prebuilt binary from GitHub
+            # releases, which sometimes times out (504). Retry; finished layers are cached.
+            - name: docker build (up to 3 tries)
+              run: |
+                  for i in 1 2 3; do
+                    docker build -t type-racer-server . && exit 0
+                    echo "build failed (try $i), retrying in 20 s"; sleep 20
+                  done
+                  exit 1
